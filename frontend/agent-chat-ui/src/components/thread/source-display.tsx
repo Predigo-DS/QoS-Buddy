@@ -3,7 +3,7 @@ import { Card, CardContent } from "../ui/card";
 import { Button } from "../ui/button";
 import { Badge } from "../ui/badge";
 import { Separator } from "../ui/separator";
-import { ChevronDown, ChevronUp, FileText, Search } from "lucide-react";
+import { ChevronDown, ChevronUp, FileText, Search, AlertTriangle, Sparkles } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 type Source = {
@@ -19,6 +19,8 @@ type Source = {
 type SourceDisplayProps = {
   sources: Source[];
   searchType?: string;
+  rewrittenQueries?: string[] | null;
+  originalQuery?: string;
 };
 
 function getRelevanceColor(score: number): string {
@@ -48,7 +50,7 @@ function groupSourcesByDocument(sources: Source[]): Map<string, Source[]> {
   return grouped;
 }
 
-export function SourceDisplay({ sources, searchType }: SourceDisplayProps) {
+export function SourceDisplay({ sources, searchType, rewrittenQueries, originalQuery }: SourceDisplayProps) {
   const [expanded, setExpanded] = useState(false);
   const [expandedSources, setExpandedSources] = useState<Set<string>>(new Set());
   
@@ -100,6 +102,28 @@ export function SourceDisplay({ sources, searchType }: SourceDisplayProps) {
 
         {expanded && (
           <div className="border-t border-blue-200">
+            {/* Show rewritten queries if available */}
+            {rewrittenQueries && rewrittenQueries.length > 0 && (
+              <div className="border-b border-blue-200 px-4 py-3 bg-purple-50">
+                <div className="flex items-start gap-2 text-sm">
+                  <Sparkles className="h-4 w-4 text-purple-600 mt-0.5" />
+                  <div className="flex-1">
+                    <p className="font-medium text-gray-800 mb-1">Query optimized for better results:</p>
+                    <div className="space-y-1">
+                      {originalQuery && (
+                        <p className="text-xs text-gray-600 italic">Original: "{originalQuery}"</p>
+                      )}
+                      {rewrittenQueries.map((rq, idx) => (
+                        <p key={idx} className="text-xs text-purple-700">
+                          → "{rq}"
+                        </p>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+              </div>
+            )}
+            
             {Array.from(groupedSources.entries()).map(([docName, docSources], idx) => (
               <div key={docName}>
                 {idx > 0 && <Separator className="my-3" />}
@@ -118,7 +142,8 @@ export function SourceDisplay({ sources, searchType }: SourceDisplayProps) {
                   {docSources.map((source, sourceIdx) => {
                     const key = `${docName}-${sourceIdx}`;
                     const isExpanded = expandedSources.has(key);
-                    const percentage = Math.round(source.score * 100);
+                    const rawPercentage = source.score * 100;
+                    const percentage = isNaN(rawPercentage) ? 0 : Math.round(rawPercentage);
                     const relevanceColor = getRelevanceColor(source.score);
                     const relevanceLabel = getRelevanceLabel(source.score);
 

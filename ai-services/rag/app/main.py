@@ -46,6 +46,7 @@ class RetrieveRequest(BaseModel):
     data_category: Optional[str] = None
     access_levels: Optional[list[str]] = None
     rrf_dense_weight: Optional[float] = 0.7  # For hybrid: 0.0-1.0 (dense weight)
+    min_relevance_score: Optional[float] = 0.7  # Minimum threshold (0.0-1.0)
 
 
 def _require_ready():
@@ -100,6 +101,7 @@ async def retrieve(req: RetrieveRequest):
                 data_category=req.data_category,
                 access_levels=req.access_levels,
                 dense_weight=req.rrf_dense_weight,
+                min_score=req.min_relevance_score,
             )
         elif req.search_type == "semantic":
             vec = models["embedder"].encode([req.query]).tolist()[0]
@@ -112,6 +114,7 @@ async def retrieve(req: RetrieveRequest):
                 tenant_id=req.tenant_id,
                 data_category=req.data_category,
                 access_levels=req.access_levels,
+                min_score=req.min_relevance_score,
             )
         else:
             raise HTTPException(

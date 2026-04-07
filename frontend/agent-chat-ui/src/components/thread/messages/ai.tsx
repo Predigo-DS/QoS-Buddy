@@ -110,10 +110,7 @@ export function AssistantMessage({
 }) {
   const content = message?.content ?? [];
   const contentString = getContentString(content);
-  const [hideToolCalls] = useQueryState(
-    "hideToolCalls",
-    parseAsBoolean.withDefault(false),
-  );
+  // Tool calls always visible
 
   const thread = useStreamContext();
   const isLastMessage =
@@ -142,10 +139,6 @@ export function AssistantMessage({
   const hasAnthropicToolCalls = !!anthropicStreamedToolCalls?.length;
   const isToolResult = message?.type === "tool";
 
-  if (isToolResult && hideToolCalls) {
-    return null;
-  }
-
   return (
     <div className="group mr-auto flex w-full items-start gap-2">
       <div className="flex w-full flex-col gap-2">
@@ -166,26 +159,23 @@ export function AssistantMessage({
                </div>
              )}
 
-             {message && (message as any).metadata?.sources && (message as any).metadata.sources.length > 0 && (
-               <SourceDisplay 
-                 sources={(message as any).metadata.sources} 
-                 searchType={(message as any).metadata.search_type}
-               />
-             )}
+{message && (message as any).metadata?.sources && (message as any).metadata.sources.length > 0 && (
+                <SourceDisplay 
+                  sources={(message as any).metadata.sources} 
+                  searchType={(message as any).metadata.search_type}
+                  rewrittenQueries={(message as any).metadata.rewritten_queries}
+                />
+              )}
 
-             {!hideToolCalls && (
-              <>
-                {(hasToolCalls && toolCallsHaveContents && (
-                  <ToolCalls toolCalls={message.tool_calls} />
-                )) ||
-                  (hasAnthropicToolCalls && (
-                    <ToolCalls toolCalls={anthropicStreamedToolCalls} />
-                  )) ||
-                  (hasToolCalls && (
-                    <ToolCalls toolCalls={message.tool_calls} />
-                  ))}
-              </>
-            )}
+{(hasToolCalls && toolCallsHaveContents && (
+                 <ToolCalls toolCalls={message.tool_calls} />
+               )) ||
+                 (hasAnthropicToolCalls && (
+                   <ToolCalls toolCalls={anthropicStreamedToolCalls} />
+                 )) ||
+                 (hasToolCalls && (
+                   <ToolCalls toolCalls={message.tool_calls} />
+                 ))}
 
             {message && (
               <CustomComponent

@@ -1,6 +1,7 @@
 import os
 import uuid
 import io
+import math
 from datetime import datetime, timezone
 from qdrant_client import QdrantClient
 from qdrant_client.models import (
@@ -28,10 +29,41 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
+
+def normalize_score(score: float, search_type: str, is_rrf: bool = False) -> float:
+    """
+    Normalize search scores to 0-1 range for consistent display.
+
+    Args:
+        score: Raw score from Qdrant
+        search_type: "hybrid", "semantic", or "keyword"
+        is_rrf: Whether this is an RRF-fused score
+
+    Returns:
+        Normalized score between 0 and 1
+    """
+    if is_rrf or search_type == "hybrid":
+        # RRF scores from Qdrant: typically 0.1-0.5 for good matches
+        # Use sigmoid-like scaling to map to 0-1
+        # Score of 0.5 -> ~0.73, 0.3 -> ~0.52, 0.2 -> ~0.39
+        return min(1.0, max(0.0, score * 1.5))
+
+    elif search_type == "semantic":
+        # Dense vectors (cosine similarity): -1 to 1
+        # Normalize to 0-1
+        return max(0.0, min(1.0, (score + 1.0) / 2.0))
+
+    elif search_type == "keyword":
+        # Sparse vectors: can be 0-50+, use sigmoid normalization
+        return 1.0 / (1.0 + math.exp(-score / 10.0))
+
+    return max(0.0, min(1.0, score))  # Fallback
+
+
 COLLECTION = os.getenv("QDRANT_COLLECTION", "qos_buddy")
 VECTOR_SIZE = 384  # dimension all-MiniLM-L6-v2
-CHUNK_SIZE = int(os.getenv("CHUNK_SIZE", 512))
-CHUNK_OVERLAP = int(os.getenv("CHUNK_OVERLAP", 64))
+CHUNK_SIZE = int(os.getenv("CHUNK_SIZE", 1024))
+CHUNK_OVERLAP = int(os.getenv("CHUNK_OVERLAP", 128))
 
 
 class VectorStoreClient:
@@ -158,6 +190,7 @@ class VectorStoreClient:
         data_category: str = None,
         access_levels: list[str] = None,
         dense_weight: float = 0.7,
+        min_score: float = 0.7,
     ) -> list[dict]:
         from datetime import datetime
 
@@ -213,17 +246,27 @@ class VectorStoreClient:
             with_payload=True,
         )
 
-        # Format results
-        return [
-            {
-                "text": r.payload.get("text", ""),
-                "score": r.score,
-                "metadata": {
-                    key: value for key, value in r.payload.items() if key != "text"
-                },
-            }
-            for r in results.points
-        ]
+        # Format results with normalization and threshold filtering
+        normalized_results = []
+        for r in results.points:
+            norm_score = normalize_score(r.score, "hybrid", is_rrf=True)
+
+            # Apply threshold filter
+            if norm_score >= min_score:
+                normalized_results.append(
+                    {
+                        "text": r.payload.get("text", ""),
+                        "score": norm_score,
+                        "raw_score": float(r.score),
+                        "metadata": {
+                            key: value
+                            for key, value in r.payload.items()
+                            if key != "text"
+                        },
+                    }
+                )
+
+        return normalized_results
 
     def search(self, query_vector: list[float], top_k: int = 5) -> list[dict]:
         results = self.client.query_points(
@@ -245,6 +288,7 @@ class VectorStoreClient:
         tenant_id: str = None,
         data_category: str = None,
         access_levels: list[str] = None,
+        min_score: float = 0.7,
     ) -> list[dict]:
         """Keyword-only search using sparse vectors"""
         from datetime import datetime
@@ -283,16 +327,26 @@ class VectorStoreClient:
             with_payload=True,
         )
 
-        return [
-            {
-                "text": r.payload.get("text", ""),
-                "score": r.score,
-                "metadata": {
-                    key: value for key, value in r.payload.items() if key != "text"
-                },
-            }
-            for r in results.points
-        ]
+        # Normalize and filter results
+        normalized_results = []
+        for r in results.points:
+            norm_score = normalize_score(r.score, "keyword")
+
+            if norm_score >= min_score:
+                normalized_results.append(
+                    {
+                        "text": r.payload.get("text", ""),
+                        "score": norm_score,
+                        "raw_score": float(r.score),
+                        "metadata": {
+                            key: value
+                            for key, value in r.payload.items()
+                            if key != "text"
+                        },
+                    }
+                )
+
+        return normalized_results
 
     def list_documents(self, limit: int = 500) -> list[dict]:
         documents: dict[str, dict] = {}

@@ -428,10 +428,7 @@ export function Thread() {
     "chatHistoryOpen",
     parseAsBoolean.withDefault(false),
   );
-  const [hideToolCalls, setHideToolCalls] = useQueryState(
-    "hideToolCalls",
-    parseAsBoolean.withDefault(false),
-  );
+  // Tool calls always visible - removed hide option
   const [input, setInput] = useState("");
   const {
     contentBlocks,
@@ -450,7 +447,9 @@ export function Thread() {
   const [modelsError, setModelsError] = useState<string | undefined>(undefined);
   const [isCreatingThread, setIsCreatingThread] = useState(false);
   const [searchType, setSearchType] = useState<"hybrid" | "semantic" | "keyword">("hybrid");
-  const [rrfDenseWeight, setRrfDenseWeight] = useState(0.7);
+  const [rrfDenseWeight, setRrfDenseWeight] = useState(0.5); // Changed to 50/50 balance
+  const [minRelevance, setMinRelevance] = useState(0.7);
+  // Query rewriting always ON - removed toggle
   const isLargeScreen = useMediaQuery("(min-width: 1024px)");
 
   const agentApiUrl = process.env.NEXT_PUBLIC_AGENT_API_URL || "http://localhost:8002";
@@ -641,31 +640,33 @@ export function Thread() {
       : undefined;
 
 stream.submit(
-       { messages: [...toolMessages, newHumanMessage], context },
-       {
-         config: routingConfig
-           ? {
-               configurable: {
-                 ...routingConfig,
-                 search_type: searchType,
-                 rrf_dense_weight: rrfDenseWeight,
-               },
-             }
-           : undefined,
-         streamMode: ["values"],
-         streamSubgraphs: true,
-         streamResumable: true,
-         optimisticValues: (prev) => ({
-           ...prev,
-           context,
-           messages: [
-             ...(prev.messages ?? []),
-             ...toolMessages,
-             newHumanMessage,
-           ],
-         }),
-       },
-     );
+        { messages: [...toolMessages, newHumanMessage], context },
+        {
+          config: routingConfig
+            ? {
+                configurable: {
+                  ...routingConfig,
+                  search_type: searchType,
+                  rrf_dense_weight: rrfDenseWeight,
+                  min_relevance_score: minRelevance,
+                  enable_query_rewriting: true, // Always ON
+                },
+              }
+            : undefined,
+          streamMode: ["values"],
+          streamSubgraphs: true,
+          streamResumable: true,
+          optimisticValues: (prev) => ({
+            ...prev,
+            context,
+            messages: [
+              ...(prev.messages ?? []),
+              ...toolMessages,
+              newHumanMessage,
+            ],
+          }),
+        },
+      );
 
     setInput("");
     setContentBlocks([]);
@@ -944,22 +945,7 @@ footer={
                       />
 
 <div className="flex items-center gap-4 p-2 pt-4 flex-wrap">
-                         <div>
-                           <div className="flex items-center space-x-2">
-                             <Switch
-                               id="render-tool-calls"
-                               checked={hideToolCalls ?? false}
-                               onCheckedChange={setHideToolCalls}
-                             />
-                             <Label
-                               htmlFor="render-tool-calls"
-                               className="text-sm text-gray-600"
-                             >
-                               Hide Tool Calls
-                             </Label>
-                           </div>
-                         </div>
-                         <ModelPicker
+                          <ModelPicker
                            models={models}
                            selectedModelKey={selectedModelKey}
                            onSelect={setSelectedModelKey}
@@ -967,12 +953,14 @@ footer={
                            error={modelsError}
                            onRetry={loadModels}
                          />
-                         <SearchSettings
-                           searchType={searchType}
-                           onSearchTypeChange={setSearchType}
-                           rrfDenseWeight={rrfDenseWeight}
-                           onRrfDenseWeightChange={setRrfDenseWeight}
-                         />
+<SearchSettings
+                            searchType={searchType}
+                            onSearchTypeChange={setSearchType}
+                            rrfDenseWeight={rrfDenseWeight}
+                            onRrfDenseWeightChange={setRrfDenseWeight}
+                            minRelevance={minRelevance}
+                            onMinRelevanceChange={setMinRelevance}
+                          />
 <Label
                            htmlFor="file-input"
                            className="flex cursor-pointer items-center gap-2"

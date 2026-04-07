@@ -30,6 +30,8 @@ class ChatRequest(BaseModel):
     base_url: str | None = None
     search_type: str | None = "hybrid"
     rrf_dense_weight: float | None = 0.7
+    min_relevance_score: float | None = 0.7
+    enable_query_rewriting: bool | None = True
 
 
 class ChatResponse(BaseModel):
@@ -38,6 +40,8 @@ class ChatResponse(BaseModel):
     model: str
     provider: str
     sources: list[dict] = []
+    search_type: str = "hybrid"
+    rewritten_queries: list[str] | None = None
 
 
 class OpenAIMessage(BaseModel):
@@ -534,11 +538,17 @@ async def chat(req: ChatRequest):
                     "api_key": resolved_api_key,
                     "search_type": req.search_type or "hybrid",
                     "rrf_dense_weight": req.rrf_dense_weight or 0.7,
+                    "min_relevance_score": req.min_relevance_score or 0.7,
+                    "enable_query_rewriting": req.enable_query_rewriting or True,
                 }
             },
         )
 
         await _upsert_thread_meta(convo_id, user_message)
+
+        # Extract rewritten queries from result
+        rewritten_queries = result.get("rewritten_queries")
+        search_type = result.get("search_type", "hybrid")
 
         return ChatResponse(
             thread_id=convo_id,
@@ -546,6 +556,8 @@ async def chat(req: ChatRequest):
             model=model_name,
             provider=provider,
             sources=result.get("sources", []),
+            search_type=search_type,
+            rewritten_queries=rewritten_queries,
         )
     except HTTPException:
         raise

@@ -44,6 +44,8 @@ type StreamSubmitOptions = {
         base_url?: string;
         search_type?: "hybrid" | "semantic" | "keyword";
         rrf_dense_weight?: number;
+        min_relevance_score?: number;
+        enable_query_rewriting?: boolean;
       };
     };
     command?: unknown;
@@ -238,6 +240,8 @@ export const StreamProvider: React.FC<{ children: ReactNode }> = ({
           base_url: cfg?.base_url,
           search_type: cfg?.search_type,
           rrf_dense_weight: cfg?.rrf_dense_weight,
+          min_relevance_score: cfg?.min_relevance_score,
+          enable_query_rewriting: cfg?.enable_query_rewriting,
         }),
       });
 
@@ -250,9 +254,14 @@ export const StreamProvider: React.FC<{ children: ReactNode }> = ({
       const answer = payload?.response ?? "";
       const sources = payload?.sources ?? [];
       const searchType = payload?.search_type ?? "hybrid";
+      const rewrittenQueries = payload?.rewritten_queries ?? null;
 
       const aiMessage = createMessage("ai", answer);
-      (aiMessage as any).metadata = { sources, search_type: searchType };
+      (aiMessage as any).metadata = { 
+        sources, 
+        search_type: searchType,
+        rewritten_queries: rewrittenQueries 
+      };
       const threadMessages = [...messages, appendedHuman, aiMessage];
 
       setMessages((prev) => [...prev, aiMessage]);
