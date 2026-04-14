@@ -1,95 +1,55 @@
+version: "3.9"
+
 services:
 
-  # ─────────────────────────────────────────
-  # VECTOR STORE
-  # ─────────────────────────────────────────
-  qdrant:
-    image: qdrant/qdrant:latest
-    container_name: qos-qdrant
+  postgres:
+    image: postgres:16
+    container_name: qosentry-postgres
+    environment:
+      POSTGRES_USER: admin
+      POSTGRES_PASSWORD: admin
+      POSTGRES_DB: qosentry
     ports:
-      - "6333:6333"   # REST API
-      - "6334:6334"   # gRPC
+      - "5432:5432"
     volumes:
-      - qdrant_data:/qdrant/storage
-    networks:
-      - qos-network
-    entrypoint: >
-      sh -c "apt-get update -qq && apt-get install -y -qq curl &&
-      exec /qdrant/qdrant"
+      - postgres_data:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:6333/readyz"]
+      test: ["CMD-SHELL", "pg_isready -U admin -d qosentry"]
       interval: 10s
       timeout: 5s
       retries: 5
-      start_period : 300s
 
-  # ─────────────────────────────────────────
-  # RAG SERVICE  (ingestion + retrieval)
-  # ─────────────────────────────────────────
-  rag:
-    build:
-      context: ./ai-services/rag
-      dockerfile: Dockerfile
-    container_name: qos-rag
+  redis:
+    image: redis:7
+    container_name: qosentry-redis
     ports:
-      - "8001:8001"
-    env_file:
-      - ./ai-services/rag/.env
-    environment:
-      - QDRANT_HOST=qdrant
-      - QDRANT_PORT=6333
-      - EMBEDDING_MODEL=${EMBEDDING_MODEL:-sentence-transformers/all-MiniLM-L6-v2}
-    volumes:
-      - ./ai-services/rag/app:/app
-      - ./data:/data:ro
-    depends_on:
-      qdrant:
-        condition: service_healthy
-    networks:
-      - qos-network
-    restart: unless-stopped
+      - "6380:6379"
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8001/health"]
-      interval: 15s
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
       timeout: 5s
-      retries: 3
+      retries: 5
 
-  # ─────────────────────────────────────────
-  # AGENT SERVICE  (LangGraph orchestration)
-  # ─────────────────────────────────────────
-  agent:
+  backend:
     build:
-      context: ./ai-services/agent
+      context: ./backend
       dockerfile: Dockerfile
-    container_name: qos-agent
+    container_name: qosentry-backend
     ports:
-      - "8002:8002"
-    env_file:
-      - ./ai-services/agent/.env
+      - "8081:8080"
     environment:
-      - RAG_SERVICE_URL=http://rag:8001
-      - LLM_MODEL=${LLM_MODEL:-llama3-8b-8192}
-      - GROQ_API_KEY=${GROQ_API_KEY}
-    volumes:
-      - ./ai-services/agent/app:/app
+      SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/qosentry
+      SPRING_DATASOURCE_USERNAME: admin
+      SPRING_DATASOURCE_PASSWORD: admin
+      SPRING_DATA_REDIS_HOST: redis
+      SPRING_DATA_REDIS_PORT: 6379
+      APP_JWT_SECRET: qosentry_jwt_secret_dev_2026_secure
+      APP_JWT_EXPIRATION_MS: 86400000
     depends_on:
-      rag:
+      postgres:
         condition: service_healthy
-    networks:
-      - qos-network
-    restart: unless-stopped
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8002/health"]
-      interval: 15s
-      timeout: 5s
-      retries: 3
-
-# ─────────────────────────────────────────
-# SHARED NETWORK & VOLUMES
-# ─────────────────────────────────────────
-networks:
-  qos-network:
-    driver: bridge
+      redis:
+        condition: service_healthy
 
 volumes:
-  qdrant_data:
+  postgres_data:
