@@ -1,0 +1,39 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$comment": "Centralized provider configuration for QoS-Buddy. Add new providers here - no code changes needed!",
+  "default_provider": "groq",
+  "default_model": "openai/gpt-oss-120b",
+  "providers": {
+    "groq": {
+      "display_name": "Groq",
+      "base_url": "https://api.groq.com/openai/v1",
+      "api_key_env": "GROQ_API_KEY",
+      "enabled": true,
+      "description": "Fast inference platform for open source AI models"
+    },
+    "local-openai": {
+      "display_name": "Local OpenAI",
+      "base_url": "http://172.17.0.1:8080/v1",
+      "api_key_env": "LOCAL_OPENAI_API_KEY",
+      "enabled": true,
+      "description": "Local OpenAI-compatible endpoint (LM Studio, llama-swap, vLLM, Ollama)"
+    },
+    "token_factory": {
+      "display_name": "Token Factory",
+      "base_url": "https://tokenfactory.esprit.tn/api",
+      "api_key_env": "TOKEN_FACTORY_API_KEY",
+      "enabled": true,
+      "description": "Esprit Token Factory API",
+      "timeout_seconds": 30
+    }
+  },
+  "schema_comment": {
+    "provider_id": "Unique identifier (lowercase, no spaces)",
+    "display_name": "Human-readable name shown in UI",
+    "base_url": "OpenAI-compatible API endpoint",
+    "api_key_env": "Environment variable name containing the API key",
+    "enabled": "Set to false to hide from UI without removing config",
+    "description": "Optional description shown in UI tooltips",
+    "timeout_seconds": "Optional HTTP timeout for slow APIs (default: 10s)"
+  }
+}

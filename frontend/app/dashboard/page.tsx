@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
+import Link from 'next/link'
 import { motion } from 'framer-motion'
 import { Activity, LogOut, LayoutDashboard, Cpu, AlertTriangle, TrendingUp, Shield } from 'lucide-react'
 import { isAuthenticated, getUsername, getRole } from '@/lib/auth'
@@ -110,6 +111,47 @@ export default function DashboardPage() {
                 </motion.div>
               )
             })}
+          </div>
+
+          {/* Inference actions */}
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-12">
+            <motion.div
+              initial={{ opacity: 0, y: 30 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ delay: 0.2, duration: 0.5 }}
+              className="glass rounded-2xl p-6 border border-border hover:border-primary/40 transition-colors"
+            >
+              <p className="text-xs uppercase tracking-wide text-primary font-semibold mb-2">Inference</p>
+              <h3 className="text-xl font-bold text-text-main mb-2">Anomaly Detection</h3>
+              <p className="text-sm text-muted mb-5">
+                Run autoencoder-based anomaly inference using live telemetry rows and threshold controls.
+              </p>
+              <Link
+                href="/inference/anomaly"
+                className="inline-flex items-center justify-center rounded-xl px-4 py-2 text-sm font-semibold bg-primary/20 text-primary border border-primary/40 hover:bg-primary/30 transition-colors"
+              >
+                Open Anomaly Inference
+              </Link>
+            </motion.div>
+
+            <motion.div
+              initial={{ opacity: 0, y: 30 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ delay: 0.3, duration: 0.5 }}
+              className="glass rounded-2xl p-6 border border-border hover:border-secondary/40 transition-colors"
+            >
+              <p className="text-xs uppercase tracking-wide text-secondary font-semibold mb-2">Inference</p>
+              <h3 className="text-xl font-bold text-text-main mb-2">SLA Forecasting</h3>
+              <p className="text-sm text-muted mb-5">
+                Score future QoE classes and SLA risk windows for selected run and segment combinations.
+              </p>
+              <Link
+                href="/inference/sla"
+                className="inline-flex items-center justify-center rounded-xl px-4 py-2 text-sm font-semibold bg-secondary/20 text-secondary border border-secondary/40 hover:bg-secondary/30 transition-colors"
+              >
+                Open SLA Inference
+              </Link>
+            </motion.div>
           </div>
 
           {/* Coming soon */}
