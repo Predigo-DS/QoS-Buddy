@@ -7,6 +7,8 @@ import {
   useState,
   Dispatch,
   SetStateAction,
+  useCallback,
+  useMemo,
 } from "react";
 import { resolveAgentApiUrl } from "@/lib/service-urls";
 
@@ -26,7 +28,7 @@ export function ThreadProvider({ children }: { children: ReactNode }) {
   const [threadsLoading, setThreadsLoading] = useState(false);
   const agentApiUrl = resolveAgentApiUrl(process.env.NEXT_PUBLIC_AGENT_API_URL);
 
-  const getThreads = async (): Promise<Thread[]> => {
+  const getThreads = useCallback(async (): Promise<Thread[]> => {
     try {
       const res = await fetch(`${agentApiUrl}/threads`);
       if (!res.ok) {
@@ -39,9 +41,9 @@ export function ThreadProvider({ children }: { children: ReactNode }) {
     } catch {
       return [];
     }
-  };
+  }, [agentApiUrl]);
 
-  const createThread = async (): Promise<string> => {
+  const createThread = useCallback(async (): Promise<string> => {
     try {
       const res = await fetch(`${agentApiUrl}/threads`, {
         method: "POST",
@@ -59,16 +61,19 @@ export function ThreadProvider({ children }: { children: ReactNode }) {
       console.error("Failed to create thread:", error);
       return uuidv4();
     }
-  };
+  }, [agentApiUrl]);
 
-  const value: ThreadContextType = {
-    getThreads,
-    createThread,
-    threads,
-    setThreads,
-    threadsLoading,
-    setThreadsLoading,
-  };
+  const value = useMemo<ThreadContextType>(
+    () => ({
+      getThreads,
+      createThread,
+      threads,
+      setThreads,
+      threadsLoading,
+      setThreadsLoading,
+    }),
+    [getThreads, createThread, threads, threadsLoading],
+  );
 
   return (
     <ThreadContext.Provider value={value}>{children}</ThreadContext.Provider>

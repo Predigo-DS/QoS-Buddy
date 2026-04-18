@@ -11,23 +11,23 @@ function StatusLine(props: {
   error?: string;
 }) {
   return (
-    <div className="rounded-lg border bg-slate-50 px-3 py-2">
+    <div className="rounded-lg border border-border bg-surface px-3 py-2">
       <div className="flex items-center justify-between gap-4">
-        <span className="text-sm font-medium text-slate-700">{props.label}</span>
+        <span className="text-sm font-medium text-text-main">{props.label}</span>
         {props.ready ? (
-          <span className="inline-flex items-center gap-1 text-xs font-medium text-emerald-700">
+          <span className="inline-flex items-center gap-1 text-xs font-medium text-accent">
             <CheckCircle2 className="size-3.5" />
             Ready
           </span>
         ) : (
-          <span className="inline-flex items-center gap-1 text-xs font-medium text-amber-700">
+          <span className="inline-flex items-center gap-1 text-xs font-medium text-primary">
             <LoaderCircle className="size-3.5 animate-spin" />
             Waiting
           </span>
         )}
       </div>
       {!!props.error && (
-        <p className="mt-1 text-xs text-rose-700">{props.error}</p>
+        <p className="mt-1 text-xs text-danger">{props.error}</p>
       )}
     </div>
   );
@@ -42,13 +42,13 @@ export function BackendReadinessGate({
 
   if (readiness.isChecking) {
     return (
-      <div className="flex min-h-screen items-center justify-center bg-slate-50 p-6">
-        <div className="w-full max-w-lg rounded-2xl border bg-white p-6 shadow-sm">
-          <div className="mb-4 flex items-center gap-2 text-slate-900">
+      <div className="flex min-h-screen items-center justify-center bg-background p-6">
+        <div className="w-full max-w-lg rounded-2xl border border-border bg-surface p-6 shadow-sm">
+          <div className="mb-4 flex items-center gap-2 text-text-main">
             <LoaderCircle className="size-5 animate-spin" />
             <h1 className="text-lg font-semibold">Preparing services</h1>
           </div>
-          <p className="mb-4 text-sm text-slate-600">
+          <p className="mb-4 text-sm text-muted">
             Waiting for Agent and RAG services to become fully operational.
           </p>
           <div className="space-y-2">
@@ -71,13 +71,13 @@ export function BackendReadinessGate({
   return (
     <>
       {readiness.isDegraded && (
-        <div className="sticky top-0 z-50 border-b border-amber-200 bg-amber-50 px-4 py-3">
+        <div className="sticky top-0 z-50 border-b border-danger/40 bg-danger/10 px-4 py-3">
           <div className="mx-auto flex w-full max-w-6xl flex-wrap items-center justify-between gap-3">
-            <div className="flex items-start gap-2 text-amber-900">
+            <div className="flex items-start gap-2 text-danger">
               <AlertTriangle className="mt-0.5 size-4" />
               <div>
                 <p className="text-sm font-medium">Running in degraded mode</p>
-                <p className="text-xs text-amber-800">
+                <p className="text-xs text-muted">
                   Some services are still unavailable. You can continue, or retry readiness checks.
                 </p>
               </div>
@@ -87,7 +87,7 @@ export function BackendReadinessGate({
               size="sm"
               variant="outline"
               onClick={readiness.retry}
-              className="border-amber-300 bg-white text-amber-900 hover:bg-amber-100"
+              className="border-danger/40 bg-surface text-danger hover:bg-danger/20"
             >
               <RefreshCw className="size-4" />
               Retry

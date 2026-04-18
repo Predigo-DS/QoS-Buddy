@@ -1,4 +1,5 @@
 import os
+import asyncio
 from typing import Optional
 from fastapi import FastAPI, HTTPException, UploadFile, File
 from fastapi.middleware.cors import CORSMiddleware
@@ -11,6 +12,38 @@ from dotenv import load_dotenv
 load_dotenv()
 
 models = {}
+warmup_state = {
+    "status": "idle",
+    "last_error": None,
+}
+warmup_lock = asyncio.Lock()
+
+
+def _warmup_response():
+    return {
+        "status": warmup_state["status"],
+        "last_error": warmup_state["last_error"],
+    }
+
+
+async def _run_warmup():
+    if "embedder" not in models or "vs" not in models:
+        return
+
+    async with warmup_lock:
+        if warmup_state["status"] == "ready":
+            return
+
+        warmup_state["status"] = "warming"
+        warmup_state["last_error"] = None
+
+        try:
+            await asyncio.to_thread(models["embedder"].encode, ["qosentry warmup"])
+            await asyncio.to_thread(models["vs"].total_chunks)
+            warmup_state["status"] = "ready"
+        except Exception as e:
+            warmup_state["status"] = "error"
+            warmup_state["last_error"] = str(e)
 
 
 @asynccontextmanager
@@ -18,9 +51,14 @@ async def lifespan(app: FastAPI):
     print("Loading AI models and connecting to DB...")
     models["embedder"] = get_embedder()
     models["vs"] = VectorStoreClient()
+    warmup_state["status"] = "idle"
+    warmup_state["last_error"] = None
+    asyncio.create_task(_run_warmup())
     print("System Ready.")
     yield
     models.clear()
+    warmup_state["status"] = "idle"
+    warmup_state["last_error"] = None
 
 
 app = FastAPI(title="QoS-Buddy RAG Service", version="1.0.0", lifespan=lifespan)
@@ -57,8 +95,18 @@ def _require_ready():
 @app.get("/health")
 async def health():
     if "embedder" not in models:
-        return {"status": "starting", "service": "rag"}
-    return {"status": "ok", "service": "rag"}
+        return {"status": "starting", "service": "rag", "warmup": _warmup_response()}
+    return {"status": "ok", "service": "rag", "warmup": _warmup_response()}
+
+
+@app.post("/warmup")
+async def warmup():
+    _require_ready()
+
+    if warmup_state["status"] != "warming" and warmup_state["status"] != "ready":
+        asyncio.create_task(_run_warmup())
+
+    return _warmup_response()
 
 
 @app.post("/ingest/text")

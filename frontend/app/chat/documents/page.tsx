@@ -70,7 +70,7 @@ export default function DocumentsPage(): React.ReactNode {
   const [rrfSparseWeight, setRrfSparseWeight] = useState("0.3");
   const [retrieveLoading, setRetrieveLoading] = useState(false);
   const [retrieveResults, setRetrieveResults] = useState<RetrieveChunk[]>([]);
-  const [expandedChunks, setExpandedChunks] = useState<Set<number>>(new Set());
+  const [expandedChunks, setExpandedChunks] = useState<Set<string>>(new Set());
 
   // Metadata filters
   const [filterDataCategory, setFilterDataCategory] = useState<string>("");
@@ -321,34 +321,34 @@ export default function DocumentsPage(): React.ReactNode {
     }
   };
 
-  const toggleChunkExpansion = (index: number) => {
+  const toggleChunkExpansion = (key: string) => {
     setExpandedChunks((prev) => {
       const newSet = new Set(prev);
-      if (newSet.has(index)) {
-        newSet.delete(index);
+      if (newSet.has(key)) {
+        newSet.delete(key);
       } else {
-        newSet.add(index);
+        newSet.add(key);
       }
       return newSet;
     });
   };
 
   const ChunkCard: React.FC<{ chunk: RetrieveChunk; index: number; prefix?: string }> = ({ chunk, index, prefix }) => {
-    const displayedIndex = prefix ? `${prefix}-${index}` : index;
-    const isExpanded = expandedChunks.has(displayedIndex as unknown as number);
+    const chunkKey = prefix ? `${prefix}-${index}` : `result-${index}`;
+    const isExpanded = expandedChunks.has(chunkKey);
     
     return (
-      <div className="rounded-lg border bg-slate-50 p-4">
-        <div className="mb-2 flex items-center justify-between text-xs text-slate-500">
+      <div className="rounded-lg border border-border bg-surface p-4">
+        <div className="mb-2 flex items-center justify-between text-xs text-muted">
           <span className="font-medium">{String(chunk.metadata?.source || "unknown")}</span>
           <span>score: {Number(chunk.score).toFixed(3)}</span>
         </div>
-        <p className="mb-3 line-clamp-3 text-sm text-slate-700">{chunk.text}</p>
+        <p className="mb-3 line-clamp-3 text-sm text-text-main">{chunk.text}</p>
         <Button
           type="button"
           variant="ghost"
           size="sm"
-          onClick={() => toggleChunkExpansion(displayedIndex as unknown as number)}
+          onClick={() => toggleChunkExpansion(chunkKey)}
           className="h-8 text-xs"
         >
           {isExpanded ? (
@@ -362,11 +362,11 @@ export default function DocumentsPage(): React.ReactNode {
           )}
         </Button>
         {isExpanded && (
-          <div className="mt-3 space-y-1 rounded bg-white p-3 text-xs">
+          <div className="mt-3 space-y-1 rounded bg-background p-3 text-xs">
             {Object.entries(chunk.metadata || {}).map(([key, value]) => (
               <div key={key} className="flex justify-between border-b py-1 last:border-0">
-                <span className="font-medium text-slate-600">{key}:</span>
-                <span className="text-slate-800">{String(value)}</span>
+                <span className="font-medium text-muted">{key}:</span>
+                <span className="text-text-main">{String(value)}</span>
               </div>
             ))}
           </div>
@@ -376,17 +376,17 @@ export default function DocumentsPage(): React.ReactNode {
   };
 
   return (
-    <div className="min-h-screen bg-gradient-to-b from-slate-50 to-white p-6 lg:p-10">
+    <div className="min-h-screen bg-background p-6 lg:p-10">
       <Toaster />
       <div className="mx-auto flex w-full max-w-6xl flex-col gap-6">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div className="space-y-1">
-            <div className="flex items-center gap-2 text-slate-700">
+            <div className="flex items-center gap-2 text-muted">
               <Database className="size-5" />
               <span className="text-sm font-medium">RAG Collection Manager</span>
             </div>
-            <h1 className="text-3xl font-semibold tracking-tight text-slate-900">Documents</h1>
-            <p className="text-sm text-slate-600">
+            <h1 className="text-3xl font-semibold tracking-tight text-text-main">Documents</h1>
+            <p className="text-sm text-muted">
               Upload files, manage indexed documents, and test retrieval quality.
             </p>
           </div>
@@ -405,7 +405,7 @@ export default function DocumentsPage(): React.ReactNode {
               variant="outline"
               asChild
             >
-              <Link href="/">
+              <Link href="/chat">
                 <ArrowLeft className="size-4" />
                 Back to Chat
               </Link>
@@ -456,17 +456,17 @@ export default function DocumentsPage(): React.ReactNode {
                   accept=".pdf,.txt,.md,text/plain,application/pdf"
                   onChange={onFileChange}
                 />
-                <p className="text-xs text-slate-500">
+                <p className="text-xs text-muted">
                   Choose one or more files, then click Upload Files.
                 </p>
               </div>
 
               {selectedFiles.length > 0 && (
-                <div className="rounded-lg border bg-slate-50 p-3">
-                  <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500">
+                <div className="rounded-lg border border-border bg-surface p-3">
+                  <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-muted">
                     Ready to upload
                   </p>
-                  <ul className="space-y-1 text-sm text-slate-700">
+                  <ul className="space-y-1 text-sm text-text-main">
                     {selectedFiles.map((file) => (
                       <li key={`${file.name}-${file.size}`}>{file.name}</li>
                     ))}
@@ -516,8 +516,8 @@ export default function DocumentsPage(): React.ReactNode {
               </div>
 
               {searchType === "hybrid" && (
-                <div className="grid gap-2 rounded-lg border bg-slate-50 p-3">
-                  <Label className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+                <div className="grid gap-2 rounded-lg border border-border bg-surface p-3">
+                  <Label className="text-xs font-semibold uppercase tracking-wide text-muted">
                     RRF Weights (Hybrid Search)
                   </Label>
                   <div className="flex items-center gap-3">
@@ -561,8 +561,8 @@ export default function DocumentsPage(): React.ReactNode {
 
               <Separator />
 
-              <div className="grid gap-2 rounded-lg border bg-slate-50 p-3">
-                <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wide text-slate-500">
+              <div className="grid gap-2 rounded-lg border border-border bg-surface p-3">
+                <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wide text-muted">
                   <Filter className="size-3" />
                   <span>Metadata Filters</span>
                 </div>
@@ -608,7 +608,7 @@ export default function DocumentsPage(): React.ReactNode {
                   type="button"
                   variant="outline"
                   onClick={() => setComparisonMode(!comparisonMode)}
-                  className={comparisonMode ? "bg-blue-50 text-blue-700" : ""}
+                  className={comparisonMode ? "bg-surface text-text-main" : ""}
                 >
                   Compare
                 </Button>
@@ -649,8 +649,8 @@ export default function DocumentsPage(): React.ReactNode {
               {comparisonResults ? (
                 <div className="grid gap-6 lg:grid-cols-2">
                   <div>
-                    <h3 className="mb-3 flex items-center gap-2 text-sm font-semibold text-blue-700">
-                      <span className="size-3 rounded-full bg-blue-500" />
+                    <h3 className="mb-3 flex items-center gap-2 text-sm font-semibold text-primary">
+                      <span className="size-3 rounded-full bg-primary" />
                       Hybrid Search Results ({comparisonResults.hybrid.length})
                     </h3>
                     <div className="space-y-3">
@@ -660,8 +660,8 @@ export default function DocumentsPage(): React.ReactNode {
                     </div>
                   </div>
                   <div>
-                    <h3 className="mb-3 flex items-center gap-2 text-sm font-semibold text-purple-700">
-                      <span className="size-3 rounded-full bg-purple-500" />
+                    <h3 className="mb-3 flex items-center gap-2 text-sm font-semibold text-accent">
+                      <span className="size-3 rounded-full bg-accent" />
                       Semantic Search Results ({comparisonResults.semantic.length})
                     </h3>
                     <div className="space-y-3">
@@ -708,9 +708,9 @@ export default function DocumentsPage(): React.ReactNode {
           </CardHeader>
           <CardContent>
             {documentsLoading ? (
-              <p className="text-sm text-slate-500">Loading documents...</p>
+              <p className="text-sm text-muted">Loading documents...</p>
             ) : documentsError ? (
-              <div className="flex items-center justify-between gap-3 rounded-lg border border-rose-200 bg-rose-50 p-3">
+              <div className="flex items-center justify-between gap-3 rounded-lg border border-danger/40 bg-danger/10 p-3">
                 <p className="text-sm text-rose-700">{documentsError}</p>
                 <Button
                   type="button"
@@ -721,12 +721,12 @@ export default function DocumentsPage(): React.ReactNode {
                 </Button>
               </div>
             ) : sortedDocuments.length === 0 ? (
-              <p className="text-sm text-slate-500">No documents indexed yet.</p>
+              <p className="text-sm text-muted">No documents indexed yet.</p>
             ) : (
               <div className="overflow-x-auto">
                 <table className="w-full min-w-[640px] text-sm">
                   <thead>
-                    <tr className="border-b text-left text-xs uppercase tracking-wide text-slate-500">
+                    <tr className="border-b border-border text-left text-xs uppercase tracking-wide text-muted">
                       <th className="py-2 pr-3">Source</th>
                       <th className="py-2 pr-3">Chunks</th>
                       <th className="py-2 pr-3">Last Updated</th>
@@ -737,11 +737,11 @@ export default function DocumentsPage(): React.ReactNode {
                     {sortedDocuments.map((doc) => (
                       <tr
                         key={doc.document_id}
-                        className="border-b"
+                        className="border-b border-border"
                       >
-                        <td className="py-3 pr-3 font-medium text-slate-800">{doc.source}</td>
-                        <td className="py-3 pr-3 text-slate-600">{doc.chunk_count}</td>
-                        <td className="py-3 pr-3 text-slate-600">
+                        <td className="py-3 pr-3 font-medium text-text-main">{doc.source}</td>
+                        <td className="py-3 pr-3 text-muted">{doc.chunk_count}</td>
+                        <td className="py-3 pr-3 text-muted">
                           {doc.last_updated
                             ? new Date(doc.last_updated).toLocaleString()
                             : "-"}

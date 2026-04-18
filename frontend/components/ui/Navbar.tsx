@@ -16,6 +16,7 @@ export default function Navbar() {
   }, [])
 
   const navLinks = [
+    { label: 'Chat', href: '/chat' },
     { label: 'Features', href: '#features' },
     { label: 'How It Works', href: '#how-it-works' },
     { label: 'Stats', href: '#stats' },

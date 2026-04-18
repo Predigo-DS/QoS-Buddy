@@ -4,7 +4,7 @@ import { useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import Link from 'next/link'
 import { motion } from 'framer-motion'
-import { Activity, LogOut, LayoutDashboard, Cpu, AlertTriangle, TrendingUp, Shield } from 'lucide-react'
+import { Activity, LogOut, LayoutDashboard, Cpu, AlertTriangle, TrendingUp, Shield, MessageSquare } from 'lucide-react'
 import { isAuthenticated, getUsername, getRole } from '@/lib/auth'
 import { useAuth } from '@/hooks/useAuth'
 
@@ -153,6 +153,28 @@ export default function DashboardPage() {
               </Link>
             </motion.div>
           </div>
+
+          <motion.div
+            initial={{ opacity: 0, y: 30 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ delay: 0.35, duration: 0.5 }}
+            className="glass rounded-2xl p-6 border border-border hover:border-primary/40 transition-colors mb-12"
+          >
+            <p className="text-xs uppercase tracking-wide text-primary font-semibold mb-2">AI Assistant</p>
+            <h3 className="text-xl font-bold text-text-main mb-2 flex items-center gap-2">
+              <MessageSquare className="w-5 h-5 text-primary" />
+              QoS Chat Workspace
+            </h3>
+            <p className="text-sm text-muted mb-5">
+              Open the integrated chat assistant for QoS analysis, source-grounded responses, and document retrieval.
+            </p>
+            <Link
+              href="/chat"
+              className="inline-flex items-center justify-center rounded-xl px-4 py-2 text-sm font-semibold bg-primary/20 text-primary border border-primary/40 hover:bg-primary/30 transition-colors"
+            >
+              Open Chat Workspace
+            </Link>
+          </motion.div>
 
           {/* Coming soon */}
           <motion.div

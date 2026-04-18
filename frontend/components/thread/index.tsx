@@ -13,7 +13,6 @@ import {
   DO_NOT_RENDER_ID_PREFIX,
   ensureToolCallsHaveResponses,
 } from "@/lib/ensure-tool-responses";
-import { LangGraphLogoSVG } from "../icons/langgraph";
 import { TooltipIconButton } from "./tooltip-icon-button";
 import {
   ArrowDown,
@@ -26,7 +25,7 @@ import {
   Plus as PlusIcon,
   Search,
   Check,
-  Database,
+  Activity,
 } from "lucide-react";
 import { useQueryState, parseAsBoolean } from "nuqs";
 import { StickToBottom, useStickToBottomContext } from "use-stick-to-bottom";
@@ -38,13 +37,6 @@ import { Switch } from "../ui/switch";
 import { Input } from "../ui/input";
 import { Skeleton } from "../ui/skeleton";
 import { Separator } from "../ui/separator";
-import { GitHubSVG } from "../icons/github";
-import {
-  Tooltip,
-  TooltipContent,
-  TooltipProvider,
-  TooltipTrigger,
-} from "../ui/tooltip";
 import { useFileUpload } from "@/hooks/use-file-upload";
 import { ContentBlocksPreview } from "./ContentBlocksPreview";
 import {
@@ -228,7 +220,7 @@ function ModelPicker({
       <div className="flex items-center gap-2">
         <Label
           htmlFor="model-picker-trigger"
-          className="text-sm text-gray-600"
+          className="text-sm text-muted"
         >
           Model
         </Label>
@@ -238,7 +230,7 @@ function ModelPicker({
           variant="outline"
           onClick={() => setOpen((prev) => !prev)}
           onKeyDown={onOpenKeyDown}
-          className="h-9 min-w-[220px] justify-between bg-white px-3"
+          className="h-9 min-w-[220px] justify-between bg-surface px-3"
           aria-haspopup="listbox"
           aria-expanded={open}
           aria-controls="model-picker-list"
@@ -246,23 +238,23 @@ function ModelPicker({
           <span className="flex min-w-0 items-center gap-2">
             <span className="truncate text-sm font-medium">{triggerText}</span>
             {triggerProvider && (
-              <span className="rounded-full bg-gray-100 px-2 py-0.5 text-[11px] font-medium text-gray-600">
+              <span className="rounded-full bg-background px-2 py-0.5 text-[11px] font-medium text-muted">
                 {triggerProvider}
               </span>
             )}
           </span>
-          <ChevronDown className="size-4 text-gray-500" />
+          <ChevronDown className="size-4 text-muted" />
         </Button>
       </div>
 
       {open && (
         <div
-          className="absolute bottom-full left-0 z-30 mb-2 w-[340px] rounded-xl border bg-white p-2 shadow-lg"
+          className="absolute bottom-full left-0 z-30 mb-2 w-[340px] rounded-xl border border-border bg-surface p-2 shadow-lg"
           onKeyDown={onListKeyDown}
         >
           {models.length > 8 && (
             <div className="relative mb-2">
-              <Search className="pointer-events-none absolute top-1/2 left-3 size-4 -translate-y-1/2 text-gray-400" />
+              <Search className="pointer-events-none absolute top-1/2 left-3 size-4 -translate-y-1/2 text-muted" />
               <Input
                 autoFocus
                 value={query}
@@ -288,7 +280,7 @@ function ModelPicker({
               </div>
             ) : error ? (
               <div className="flex flex-col items-start gap-2 p-3">
-                <p className="text-sm text-gray-600">{error}</p>
+                <p className="text-sm text-muted">{error}</p>
                 <Button
                   type="button"
                   size="sm"
@@ -299,14 +291,14 @@ function ModelPicker({
                 </Button>
               </div>
             ) : flatOptions.length === 0 ? (
-              <p className="p-3 text-sm text-gray-500">
+              <p className="p-3 text-sm text-muted">
                 {query.trim() ? "No matching models." : "No models available."}
               </p>
             ) : (
               groupedModels.map(([provider, options], groupIndex) => (
                 <div key={provider}>
                   {groupIndex > 0 && <Separator className="my-1" />}
-                  <p className="px-2 py-1 text-[11px] font-semibold tracking-wide text-gray-500 uppercase">
+                  <p className="px-2 py-1 text-[11px] font-semibold tracking-wide text-muted uppercase">
                     {formatProvider(provider, options[0]?.display_name)}
                   </p>
                   {options.map((model) => {
@@ -327,14 +319,14 @@ function ModelPicker({
                         }}
                         className={cn(
                           "flex w-full items-center justify-between rounded-md px-2 py-1.5 text-left text-sm",
-                          highlightedIndex === optionIndex && "bg-gray-50",
-                          isSelected && "bg-gray-100",
+                          highlightedIndex === optionIndex && "bg-background",
+                          isSelected && "bg-background",
                         )}
                       >
-                        <span className="truncate font-medium text-gray-800">
+                        <span className="truncate font-medium text-text-main">
                           {model.id}
                         </span>
-                        {isSelected && <Check className="size-4 text-gray-600" />}
+                        {isSelected && <Check className="size-4 text-muted" />}
                       </button>
                     );
                   })}
@@ -386,30 +378,6 @@ function ScrollToBottom(props: { className?: string }) {
       <ArrowDown className="h-4 w-4" />
       <span>Scroll to bottom</span>
     </Button>
-  );
-}
-
-function OpenGitHubRepo() {
-  return (
-    <TooltipProvider>
-      <Tooltip>
-        <TooltipTrigger asChild>
-          <a
-            href="https://github.com/langchain-ai/agent-chat-ui"
-            target="_blank"
-            className="flex items-center justify-center"
-          >
-            <GitHubSVG
-              width="24"
-              height="24"
-            />
-          </a>
-        </TooltipTrigger>
-        <TooltipContent side="left">
-          <p>Open GitHub repo</p>
-        </TooltipContent>
-      </Tooltip>
-    </TooltipProvider>
   );
 }
 
@@ -694,7 +662,7 @@ stream.submit(
     <div className="flex h-screen w-full overflow-hidden">
       <div className="relative hidden lg:flex">
         <motion.div
-          className="absolute z-20 h-full overflow-hidden border-r bg-white"
+          className="absolute z-20 h-full overflow-hidden border-r border-border bg-surface"
           style={{ width: 300 }}
           animate={
             isLargeScreen
@@ -748,7 +716,7 @@ stream.submit(
               <div>
                 {(!chatHistoryOpen || !isLargeScreen) && (
                   <Button
-                    className="hover:bg-gray-100"
+                    className="hover:bg-surface"
                     variant="ghost"
                     onClick={() => setChatHistoryOpen((p) => !p)}
                   >
@@ -760,19 +728,6 @@ stream.submit(
                   </Button>
                 )}
               </div>
-              <div className="absolute top-2 right-4 flex items-center">
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  asChild
-                >
-                  <Link href="/documents">
-                    <Database className="size-4" />
-                    Documents
-                  </Link>
-                </Button>
-                <OpenGitHubRepo />
-              </div>
             </div>
           )}
           {chatStarted && (
@@ -781,7 +736,7 @@ stream.submit(
                 <div className="absolute left-0 z-10">
                   {(!chatHistoryOpen || !isLargeScreen) && (
                     <Button
-                      className="hover:bg-gray-100"
+                      className="hover:bg-surface"
                       variant="ghost"
                       onClick={() => setChatHistoryOpen((p) => !p)}
                     >
@@ -805,30 +760,14 @@ stream.submit(
                     damping: 30,
                   }}
                 >
-                  <LangGraphLogoSVG
-                    width={32}
-                    height={32}
-                  />
+                  <Activity className="size-8 text-primary" />
                   <span className="text-xl font-semibold tracking-tight">
-                    Agent Chat
+                    QoSentry Chat
                   </span>
                 </motion.button>
               </div>
 
               <div className="flex items-center gap-4">
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  asChild
-                >
-                  <Link href="/documents">
-                    <Database className="size-4" />
-                    Documents
-                  </Link>
-                </Button>
-                <div className="flex items-center">
-                  <OpenGitHubRepo />
-                </div>
 <TooltipIconButton
                    size="lg"
                    className="p-4"
@@ -852,7 +791,7 @@ stream.submit(
           <StickToBottom className="relative flex-1 overflow-hidden">
             <StickyToBottomContent
               className={cn(
-                "absolute inset-0 overflow-y-scroll px-4 [&::-webkit-scrollbar]:w-1.5 [&::-webkit-scrollbar-thumb]:rounded-full [&::-webkit-scrollbar-thumb]:bg-gray-300 [&::-webkit-scrollbar-track]:bg-transparent",
+                "absolute inset-0 overflow-y-scroll px-4 [&::-webkit-scrollbar]:w-1.5 [&::-webkit-scrollbar-thumb]:rounded-full [&::-webkit-scrollbar-thumb]:bg-border [&::-webkit-scrollbar-track]:bg-transparent",
                 !chatStarted && "mt-[25vh] flex flex-col items-stretch",
                 chatStarted && "grid grid-rows-[1fr_auto]",
               )}
@@ -893,12 +832,12 @@ stream.submit(
                 </>
               }
 footer={
-                <div className="sticky bottom-0 flex flex-col items-center gap-8 bg-white">
+                <div className="sticky bottom-0 flex flex-col items-center gap-6 bg-background px-2 pb-2">
                    {!chatStarted && (
                      <div className="flex items-center gap-3">
-                       <LangGraphLogoSVG className="h-8 flex-shrink-0" />
-                       <h1 className="text-2xl font-semibold tracking-tight">
-                         Agent Chat
+                       <Activity className="h-7 w-7 flex-shrink-0 text-primary" />
+                       <h1 className="text-4xl font-semibold tracking-tight sm:text-5xl">
+                         QoSentry Chat
                        </h1>
                      </div>
                    )}
@@ -908,15 +847,16 @@ footer={
                   <div
                     ref={dropRef}
                     className={cn(
-                      "bg-muted relative z-10 mx-auto mb-8 w-full max-w-3xl rounded-2xl shadow-xs transition-all",
+                      "relative z-10 mx-auto mb-8 w-full max-w-4xl overflow-hidden rounded-3xl border border-border/70 bg-surface/85 shadow-[0_22px_60px_rgba(2,6,23,0.55)] backdrop-blur transition-all",
                       dragOver
                         ? "border-primary border-2 border-dotted"
-                        : "border border-solid",
+                        : "",
                     )}
                   >
+                    <div className="pointer-events-none absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-primary/70 to-transparent" />
                     <form
                       onSubmit={handleSubmit}
-                      className="mx-auto grid max-w-3xl grid-rows-[1fr_auto] gap-2"
+                      className="mx-auto grid w-full max-w-4xl gap-2 px-3 py-3 sm:px-4 sm:py-4"
                     >
                       <ContentBlocksPreview
                         blocks={contentBlocks}
@@ -940,10 +880,10 @@ footer={
                           }
                         }}
                         placeholder="Type your message..."
-                        className="field-sizing-content resize-none border-none bg-transparent p-3.5 pb-0 shadow-none ring-0 outline-none focus:ring-0 focus:outline-none"
+                        className="min-h-24 w-full resize-none rounded-2xl border border-white/60 bg-[#d9e1ee] p-3.5 text-[15px] leading-relaxed text-[#0f172a] shadow-inner ring-0 outline-none placeholder:text-[#475569] focus:border-primary/60 focus:ring-1 focus:ring-primary/20"
                       />
 
-<div className="flex items-center gap-4 p-2 pt-4 flex-wrap">
+<div className="flex flex-wrap items-center gap-3 border-t border-border/60 px-1 pt-3">
                           <ModelPicker
                            models={models}
                            selectedModelKey={selectedModelKey}
@@ -962,10 +902,10 @@ footer={
                           />
 <Label
                            htmlFor="file-input"
-                           className="flex cursor-pointer items-center gap-2"
+                           className="inline-flex h-9 cursor-pointer items-center gap-2 rounded-lg border border-border bg-background/70 px-3 text-xs font-medium text-muted transition-colors hover:text-text-main"
                          >
-                           <PlusIcon className="size-5 text-gray-600" />
-                           <span className="text-sm text-gray-600">
+                           <PlusIcon className="size-4 text-muted" />
+                           <span className="text-xs text-muted">
                              Upload PDF or Image
                            </span>
                          </Label>
@@ -981,7 +921,7 @@ footer={
                           <Button
                             key="stop"
                             onClick={() => stream.stop()}
-                            className="ml-auto"
+                            className="ml-auto h-9"
                           >
                             <LoaderCircle className="h-4 w-4 animate-spin" />
                             Cancel
@@ -989,7 +929,7 @@ footer={
                         ) : (
                           <Button
                             type="submit"
-                            className="ml-auto shadow-md transition-all"
+                            className="ml-auto h-9 bg-gradient-to-r from-primary to-secondary px-5 text-white shadow-md transition-all hover:opacity-95"
                             disabled={
                               isLoading ||
                               (!input.trim() && contentBlocks.length === 0)

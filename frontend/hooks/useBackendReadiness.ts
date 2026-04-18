@@ -8,6 +8,7 @@ type ReadinessSnapshot = {
   phase: ReadinessPhase;
   agentReady: boolean;
   ragReady: boolean;
+  ragWarmup: "idle" | "warming" | "ready" | "error";
   agentError?: string;
   ragError?: string;
   lastCheckedAt?: number;
@@ -45,10 +46,12 @@ export function useBackendReadiness() {
     phase: "checking",
     agentReady: false,
     ragReady: false,
+    ragWarmup: "idle",
   });
 
   const timerRef = useRef<number | null>(null);
   const runIdRef = useRef(0);
+  const ragWarmupRef = useRef<"idle" | "warming" | "ready" | "error">("idle");
 
   const clearTimer = useCallback(() => {
     if (timerRef.current !== null) {
@@ -57,44 +60,76 @@ export function useBackendReadiness() {
     }
   }, []);
 
-  const checkOnce = useCallback(async () => {
-    let agentReady = false;
-    let ragReady = false;
-    let agentError: string | undefined;
-    let ragError: string | undefined;
-
-    try {
-      const models = await refreshModels(agentApiUrl);
-      agentReady = Array.isArray(models) && models.length > 0;
-      if (!agentReady) {
-        agentError = "Agent returned no models.";
-      }
-    } catch (error) {
-      agentError = error instanceof Error ? error.message : "Agent check failed.";
+  const triggerRagWarmup = useCallback(async () => {
+    if (ragWarmupRef.current === "warming" || ragWarmupRef.current === "ready") {
+      return;
     }
 
+    ragWarmupRef.current = "warming";
     try {
-      const response = await fetch(`${ragApiUrl}/health`);
+      const response = await fetch(`${ragApiUrl}/warmup`, { method: "POST" });
       if (!response.ok) {
-        throw new Error(`RAG health check failed (${response.status}).`);
+        throw new Error(`RAG warmup failed (${response.status}).`);
       }
 
       const payload = (await response.json()) as { status?: string };
-      ragReady = payload?.status === "ok";
-      if (!ragReady) {
-        ragError = `RAG reported status: ${payload?.status ?? "unknown"}.`;
-      }
-    } catch (error) {
-      ragError = error instanceof Error ? error.message : "RAG check failed.";
+      ragWarmupRef.current = payload?.status === "ready" ? "ready" : "warming";
+    } catch {
+      ragWarmupRef.current = "error";
+    }
+  }, [ragApiUrl]);
+
+  const checkOnce = useCallback(async () => {
+    const [agentResult, ragResult] = await Promise.all([
+      (async () => {
+        try {
+          const models = await refreshModels(agentApiUrl);
+          const ready = Array.isArray(models) && models.length > 0;
+          return {
+            ready,
+            error: ready ? undefined : "Agent returned no models.",
+          };
+        } catch (error) {
+          return {
+            ready: false,
+            error: error instanceof Error ? error.message : "Agent check failed.",
+          };
+        }
+      })(),
+      (async () => {
+        try {
+          const response = await fetch(`${ragApiUrl}/health`);
+          if (!response.ok) {
+            throw new Error(`RAG health check failed (${response.status}).`);
+          }
+
+          const payload = (await response.json()) as { status?: string };
+          const ready = payload?.status === "ok";
+          return {
+            ready,
+            error: ready ? undefined : `RAG reported status: ${payload?.status ?? "unknown"}.`,
+          };
+        } catch (error) {
+          return {
+            ready: false,
+            error: error instanceof Error ? error.message : "RAG check failed.",
+          };
+        }
+      })(),
+    ]);
+
+    if (ragResult.ready && ragWarmupRef.current !== "warming" && ragWarmupRef.current !== "ready") {
+      void triggerRagWarmup();
     }
 
     return {
-      agentReady,
-      ragReady,
-      agentError,
-      ragError,
+      agentReady: agentResult.ready,
+      ragReady: ragResult.ready,
+      agentError: agentResult.error,
+      ragError: ragResult.error,
+      ragWarmup: ragWarmupRef.current,
     };
-  }, [agentApiUrl, ragApiUrl]);
+  }, [agentApiUrl, ragApiUrl, triggerRagWarmup]);
 
   const startChecks = useCallback(() => {
     clearTimer();
@@ -107,7 +142,9 @@ export function useBackendReadiness() {
       phase: "checking",
       agentReady: false,
       ragReady: false,
+      ragWarmup: "idle",
     });
+    ragWarmupRef.current = "idle";
 
     const loop = async () => {
       const result = await checkOnce();

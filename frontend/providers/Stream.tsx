@@ -5,13 +5,13 @@ import React, {
   useState,
   useMemo,
   useEffect,
+  useCallback,
 } from "react";
 import { useQueryState } from "nuqs";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
-import { LangGraphLogoSVG } from "@/components/icons/langgraph";
 import { Label } from "@/components/ui/label";
-import { ArrowRight } from "lucide-react";
+import { Activity, ArrowRight } from "lucide-react";
 import { useThreads } from "./Thread";
 import { Message } from "@langchain/langgraph-sdk";
 import { UIMessage } from "@langchain/langgraph-sdk/react-ui";
@@ -193,7 +193,7 @@ export const StreamProvider: React.FC<{ children: ReactNode }> = ({
     };
   }, [threadId, agentApiUrl]);
 
-  const submit = async (
+  const submit = useCallback(async (
     input?: StreamSubmitInput,
     options?: StreamSubmitOptions,
   ): Promise<void> => {
@@ -283,11 +283,11 @@ export const StreamProvider: React.FC<{ children: ReactNode }> = ({
       setIsLoading(false);
       setAbortController(null);
     }
-  };
+  }, [agentApiUrl, messages, setThreadId, setThreads, threadId]);
 
-  const stop = () => {
+  const stop = useCallback(() => {
     abortController?.abort();
-  };
+  }, [abortController]);
 
   const value = useMemo<StreamContextType>(
     () => ({
@@ -301,7 +301,7 @@ export const StreamProvider: React.FC<{ children: ReactNode }> = ({
       setBranch: () => {},
       getMessagesMetadata: () => undefined,
     }),
-    [messages, isLoading, error, interrupt],
+    [messages, isLoading, error, interrupt, submit, stop],
   );
 
   if (!finalApiUrl || !finalAssistantId) {
@@ -310,9 +310,9 @@ export const StreamProvider: React.FC<{ children: ReactNode }> = ({
         <div className="animate-in fade-in-0 zoom-in-95 bg-background flex max-w-3xl flex-col rounded-lg border shadow-lg">
           <div className="mt-14 flex flex-col gap-2 border-b p-6">
             <div className="flex flex-col items-start gap-2">
-              <LangGraphLogoSVG className="h-7" />
+              <Activity className="h-7 w-7 text-primary" />
               <h1 className="text-xl font-semibold tracking-tight">
-                Agent Chat
+                QoSentry Chat
               </h1>
             </div>
             <p className="text-muted-foreground">
