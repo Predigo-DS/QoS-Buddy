@@ -11,8 +11,9 @@ from langchain_core.messages import AIMessage, BaseMessage, HumanMessage
 from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
 from psycopg import AsyncConnection
 from psycopg.rows import dict_row
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from graph import build_graph
+from incident_graph import build_incident_graph, available_placeholder_tools
 from dotenv import load_dotenv
 from config import PROVIDERS, DEFAULT_PROVIDER, LLM_MODEL, FULL_CONFIG
 
@@ -67,6 +68,25 @@ class OpenAIChatRequest(BaseModel):
     provider: str | None = None
     base_url: str | None = None
     stream: bool = False
+
+
+class IncidentRequest(BaseModel):
+    device: str
+    latency: float | None = None
+    cpu: float | None = None
+    memory: float | None = None
+    packet_loss: float | None = None
+    dry_run: bool = True
+
+
+class IncidentResponse(BaseModel):
+    incident: dict
+    risk: dict
+    plan: list[str] = Field(default_factory=list)
+    tool_trace: list[dict] = Field(default_factory=list)
+    validation: dict = Field(default_factory=dict)
+    decision: str
+    expected_recovery_seconds: int | None = None
 
 
 async def _run_setup_maybe_async(checkpointer):
@@ -369,6 +389,7 @@ async def lifespan(app: FastAPI):
     app.state.checkpointer_ctx = None
     app.state.persistence_enabled = False
     app.state.graph = build_graph()
+    app.state.incident_graph = build_incident_graph()
     app.state.models_cache_data = None
     app.state.models_cache_updated_at = 0.0
     app.state.models_cache_lock = asyncio.Lock()
@@ -410,6 +431,39 @@ async def health():
         "service": "agent",
         "persistence": bool(getattr(app.state, "persistence_enabled", False)),
     }
+
+
+@app.get("/incident/tools")
+async def get_incident_tools():
+    return {
+        "mode": "simulated",
+        "tools": available_placeholder_tools(),
+    }
+
+
+@app.post("/incident/respond", response_model=IncidentResponse)
+async def incident_respond(req: IncidentRequest):
+    try:
+        incident_graph = app.state.incident_graph
+        incident = req.model_dump(exclude_none=True)
+        result = await incident_graph.ainvoke({"incident": incident})
+
+        tool_trace = result.get("tool_trace", [])
+        executed_plan = [entry.get("tool", "") for entry in tool_trace if entry.get("tool")]
+
+        return IncidentResponse(
+            incident=incident,
+            risk=result.get("risk", {}),
+            plan=executed_plan,
+            tool_trace=tool_trace,
+            validation=result.get("validation", {}),
+            decision=result.get("decision", "No decision produced."),
+            expected_recovery_seconds=result.get("expected_recovery_seconds"),
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 @app.get("/config")
