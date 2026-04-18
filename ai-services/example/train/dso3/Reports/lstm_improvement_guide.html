@@ -1,0 +1,523 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>LSTM Forecasting — Improvement Guide</title>
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600&family=DM+Sans:wght@400;500;700&family=Fraunces:wght@700;900&display=swap" rel="stylesheet">
+<style>
+:root {
+  --bg: #0c0f14;
+  --surface: #161b24;
+  --surface2: #1c222e;
+  --border: #2a3240;
+  --text: #e2e8f0;
+  --text-muted: #8899aa;
+  --accent: #f59e0b;
+  --accent2: #3b82f6;
+  --red: #ef4444;
+  --green: #22c55e;
+  --purple: #a78bfa;
+  --cyan: #06b6d4;
+  --pink: #f472b6;
+}
+* { margin:0; padding:0; box-sizing:border-box; }
+body {
+  background: var(--bg);
+  color: var(--text);
+  font-family: 'DM Sans', sans-serif;
+  line-height: 1.7;
+  min-height: 100vh;
+}
+.grain {
+  position: fixed; inset:0; z-index:0; pointer-events:none;
+  background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='0.04'/%3E%3C/svg%3E");
+}
+.container { max-width: 900px; margin: 0 auto; padding: 2rem 1.5rem; position:relative; z-index:1; }
+
+/* Header */
+.hero { text-align:center; padding: 3rem 0 2rem; border-bottom: 1px solid var(--border); margin-bottom: 2.5rem; }
+.hero h1 {
+  font-family: 'Fraunces', serif;
+  font-weight: 900;
+  font-size: clamp(2rem, 5vw, 3rem);
+  background: linear-gradient(135deg, var(--accent), var(--pink), var(--accent2));
+  -webkit-background-clip: text; -webkit-text-fill-color: transparent;
+  letter-spacing: -0.02em;
+  margin-bottom: .5rem;
+}
+.hero .sub { color: var(--text-muted); font-size: 1.05rem; }
+.tag-row { display:flex; gap:.5rem; justify-content:center; flex-wrap:wrap; margin-top:1rem; }
+.tag {
+  display:inline-block; padding: .25rem .75rem; border-radius: 100px;
+  font-size: .78rem; font-weight: 500; letter-spacing: .02em;
+  border: 1px solid var(--border); color: var(--text-muted);
+}
+.tag.bug { border-color: var(--red); color: var(--red); }
+.tag.perf { border-color: var(--green); color: var(--green); }
+.tag.arch { border-color: var(--purple); color: var(--purple); }
+.tag.data { border-color: var(--cyan); color: var(--cyan); }
+
+/* Nav */
+.nav { display:flex; gap:.5rem; flex-wrap:wrap; margin-bottom:2rem; position:sticky; top:0; z-index:10; background:var(--bg); padding: .75rem 0; border-bottom:1px solid var(--border); }
+.nav button {
+  background: var(--surface); border: 1px solid var(--border); color: var(--text-muted);
+  padding: .4rem .9rem; border-radius: 6px; cursor:pointer; font-size:.82rem; font-family: 'DM Sans', sans-serif; transition: all .2s;
+}
+.nav button:hover, .nav button.active { background: var(--accent); color: var(--bg); border-color: var(--accent); font-weight:700; }
+
+/* Sections */
+.section { display:none; animation: fadeIn .3s ease; }
+.section.active { display:block; }
+@keyframes fadeIn { from { opacity:0; transform:translateY(8px); } to { opacity:1; transform:translateY(0); } }
+
+/* Cards */
+.card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 1.5rem;
+  margin-bottom: 1.25rem;
+  transition: border-color .2s;
+}
+.card:hover { border-color: var(--accent); }
+.card h3 {
+  font-family: 'Fraunces', serif;
+  font-weight: 700;
+  font-size: 1.15rem;
+  margin-bottom: .5rem;
+  display: flex;
+  align-items: center;
+  gap: .5rem;
+}
+.card h3 .icon { font-size: 1.3rem; }
+.card p, .card li { color: var(--text-muted); font-size: .92rem; }
+.card p { margin-bottom: .6rem; }
+.card ul { padding-left: 1.25rem; margin-top:.4rem; }
+.card li { margin-bottom: .3rem; }
+
+.severity {
+  display:inline-block; padding: .15rem .5rem; border-radius: 100px; font-size: .7rem;
+  font-weight: 600; letter-spacing: .04em; margin-left: auto;
+}
+.severity.critical { background: rgba(239,68,68,.15); color: var(--red); }
+.severity.high { background: rgba(245,158,11,.15); color: var(--accent); }
+.severity.medium { background: rgba(59,130,246,.15); color: var(--accent2); }
+
+/* Code blocks */
+pre {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 1rem;
+  overflow-x: auto;
+  margin: .75rem 0;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: .8rem;
+  line-height: 1.6;
+  color: var(--text-muted);
+}
+code { font-family: 'JetBrains Mono', monospace; font-size: .82rem; }
+.inline-code {
+  background: var(--surface2); padding: .1rem .4rem; border-radius: 4px;
+  color: var(--accent); font-size: .82rem;
+}
+
+/* Diff styling */
+.diff-add { color: var(--green); }
+.diff-rm  { color: var(--red); text-decoration: line-through; opacity: .6; }
+.diff-comment { color: #5a6a7a; }
+
+/* Impact meter */
+.impact { display:flex; gap:4px; align-items:center; margin-top:.75rem; }
+.impact-label { font-size:.75rem; color:var(--text-muted); margin-right:.25rem; }
+.impact-bar { width:24px; height:6px; border-radius:3px; background:var(--border); }
+.impact-bar.filled { background: var(--green); }
+.impact-bar.filled.high { background: var(--accent); }
+.impact-bar.filled.crit { background: var(--red); }
+
+/* Summary table */
+.summary-grid {
+  display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 1rem; margin-bottom: 2rem;
+}
+.stat-card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 1.25rem;
+  text-align: center;
+}
+.stat-card .num {
+  font-family: 'Fraunces', serif; font-weight: 900; font-size: 2rem;
+  background: linear-gradient(135deg, var(--accent), var(--pink));
+  -webkit-background-clip: text; -webkit-text-fill-color: transparent;
+}
+.stat-card .label { color: var(--text-muted); font-size: .82rem; margin-top: .25rem; }
+</style>
+</head>
+<body>
+<div class="grain"></div>
+<div class="container">
+
+<div class="hero">
+  <h1>LSTM Forecasting Improvements</h1>
+  <p class="sub">Analysis of your QoE forecasting notebook — bugs, architecture, data & training fixes</p>
+  <div class="tag-row">
+    <span class="tag bug">4 Bugs</span>
+    <span class="tag arch">5 Architecture</span>
+    <span class="tag data">4 Data/Features</span>
+    <span class="tag perf">4 Training</span>
+  </div>
+</div>
+
+<div class="summary-grid">
+  <div class="stat-card"><div class="num">17</div><div class="label">Total Recommendations</div></div>
+  <div class="stat-card"><div class="num">4</div><div class="label">Critical Bugs</div></div>
+  <div class="stat-card"><div class="num">+8-15%</div><div class="label">Expected F1 Gain</div></div>
+  <div class="stat-card"><div class="num">76→~55</div><div class="label">Suggested Features</div></div>
+</div>
+
+<div class="nav">
+  <button class="active" onclick="show('bugs')">🐛 Bugs & Leaks</button>
+  <button onclick="show('arch')">🏗️ Architecture</button>
+  <button onclick="show('data')">📊 Data & Features</button>
+  <button onclick="show('train')">⚙️ Training</button>
+  <button onclick="show('code')">📝 Code Fixes</button>
+</div>
+
+<!-- ═══════════════════════════ BUGS ═══════════════════════════ -->
+<div class="section active" id="bugs">
+
+<div class="card">
+  <h3><span class="icon">🔴</span> 1. Scaler Fitted Per-Segment but Feature Columns Shared <span class="severity critical">CRITICAL</span></h3>
+  <p>You call <code class="inline-code">preprocess_segment()</code> with <code class="inline-code">fit=False</code> for each segment, but inside the function a <strong>new</strong> <code class="inline-code">RobustScaler()</code> is always created and fitted on that segment's training portion. The <code class="inline-code">scaler</code> parameter you pass in is <strong>completely ignored</strong> — it's never used anywhere in the function body.</p>
+  <p><strong>Impact:</strong> Each segment gets its own scaler, which is actually fine for per-segment processing. But if you later need to apply the scaler to new data at inference, you've only saved the last one. More critically, the <code class="inline-code">fit</code> parameter only controls the LabelEncoder — the scaler always re-fits, which could cause train/val/test leakage if you ever change the split logic.</p>
+  <p><strong>Fix:</strong> Either (a) save each segment's scaler in <code class="inline-code">seg_data</code>, or (b) use the passed <code class="inline-code">scaler</code> when <code class="inline-code">fit=False</code>.</p>
+<pre><span class="diff-comment"># Inside preprocess_segment, replace the scaler block:</span>
+<span class="diff-rm">scaler = RobustScaler().fit(X_all[:train_end])</span>
+<span class="diff-add">if fit or scaler is None:</span>
+<span class="diff-add">    scaler = RobustScaler().fit(X_all[:train_end])</span>
+X_scaled = scaler.transform(X_all)
+</pre>
+  <div class="impact"><span class="impact-label">Impact:</span><div class="impact-bar filled crit"></div><div class="impact-bar filled crit"></div><div class="impact-bar filled crit"></div><div class="impact-bar filled crit"></div><div class="impact-bar filled crit"></div></div>
+</div>
+
+<div class="card">
+  <h3><span class="icon">🔴</span> 2. IQR Outlier Clipping Uses Future Data <span class="severity critical">CRITICAL</span></h3>
+  <p>Your IQR bounds are computed on <code class="inline-code">df[NUMERIC].iloc[:train_end_iqr]</code> which is correct for training. But then you apply <code class="inline-code">df[NUMERIC].clip()</code> to <strong>the entire dataframe</strong> including validation and test portions. The clip boundaries themselves leak training-set distributional info into test data.</p>
+  <p><strong>Why it matters:</strong> This is a subtle but real leakage. Extreme outliers in the test set that would have been unseen by the model are silently capped to training-distribution bounds, making the model appear to handle anomalies better than it actually does.</p>
+  <p><strong>Fix:</strong> This is borderline acceptable (clipping to train stats is a common approach). But be aware it can slightly inflate test metrics. The bigger problem is the <code class="inline-code">interpolate().ffill().bfill()</code> that follows — it uses future values to fill NaNs across the entire time series.</p>
+<pre><span class="diff-comment"># The interpolate line leaks future into past:</span>
+<span class="diff-rm">df[NUMERIC] = df[NUMERIC].interpolate(method='linear').ffill().bfill()</span>
+<span class="diff-comment"># Fix: only forward-fill, never backward-fill across train/val/test</span>
+<span class="diff-add">df[NUMERIC] = df[NUMERIC].ffill().fillna(0)</span>
+</pre>
+  <div class="impact"><span class="impact-label">Impact:</span><div class="impact-bar filled crit"></div><div class="impact-bar filled crit"></div><div class="impact-bar filled crit"></div><div class="impact-bar filled crit"></div><div class="impact-bar"></div></div>
+</div>
+
+<div class="card">
+  <h3><span class="icon">🟡</span> 3. Zero-Variance Features Still in Input <span class="severity high">HIGH</span></h3>
+  <p>Columns <code class="inline-code">rebuffering_count</code>, <code class="inline-code">total_stall_seconds</code>, <code class="inline-code">rx_dropped</code>, <code class="inline-code">tx_dropped</code> are all constant zero across the entire dataset. You do drop them in <code class="inline-code">DROP_COLS</code> — good! But <code class="inline-code">switch_id</code> is also constant (always 1), and you're dropping it. However, after one-hot encoding of <code class="inline-code">segment</code> and <code class="inline-code">port_no</code>, you end up with 76 features when many are redundant.</p>
+  <p><strong>Also suspicious:</strong> <code class="inline-code">video_start_time_ms</code> has a max of 3e15 (clearly corrupted timestamps). You clip to 1e8, but this column's signal-to-noise ratio is very poor. Consider dropping it entirely.</p>
+  <div class="impact"><span class="impact-label">Impact:</span><div class="impact-bar filled high"></div><div class="impact-bar filled high"></div><div class="impact-bar filled high"></div><div class="impact-bar"></div><div class="impact-bar"></div></div>
+</div>
+
+<div class="card">
+  <h3><span class="icon">🟡</span> 4. dataplane_latency_ms Has 29% Missing Values <span class="severity high">HIGH</span></h3>
+  <p>43,660 out of 152,071 rows (~29%) have <code class="inline-code">NaN</code> for <code class="inline-code">dataplane_latency_ms</code>. Your current approach fills these with linear interpolation, which is problematic for two reasons: (a) it assumes missingness is random (it's likely segment-dependent), and (b) interpolation across long gaps creates artificial smoothness.</p>
+  <p><strong>Fix:</strong> Add a binary indicator column <code class="inline-code">dataplane_latency_missing</code> before filling. Then fill with segment-specific medians from the training set, not interpolation.</p>
+<pre><span class="diff-add">if 'dataplane_latency_ms' in df.columns:</span>
+<span class="diff-add">    df['dp_latency_missing'] = df['dataplane_latency_ms'].isna().astype(float)</span>
+<span class="diff-add">    train_median = df['dataplane_latency_ms'].iloc[:train_end_iqr].median()</span>
+<span class="diff-add">    df['dataplane_latency_ms'].fillna(train_median, inplace=True)</span>
+</pre>
+  <div class="impact"><span class="impact-label">Impact:</span><div class="impact-bar filled high"></div><div class="impact-bar filled high"></div><div class="impact-bar filled high"></div><div class="impact-bar"></div><div class="impact-bar"></div></div>
+</div>
+
+</div>
+
+<!-- ═══════════════════════════ ARCHITECTURE ═══════════════════════════ -->
+<div class="section" id="arch">
+
+<div class="card">
+  <h3><span class="icon">⚡</span> 5. Single-Layer LSTM is Under-powered <span class="severity high">HIGH</span></h3>
+  <p>You're using <code class="inline-code">num_layers=1</code> with <code class="inline-code">hidden_size=128</code> for 76 features and a 60-step window. Optuna confirmed 1 layer, but Optuna only searched [1, 3] — it may have avoided 2-3 layers because the dropout was misconfigured (LSTM inter-layer dropout only activates when <code class="inline-code">num_layers > 1</code>, so trials with more layers and high dropout would underperform).</p>
+  <p><strong>Recommendation:</strong> Try <code class="inline-code">num_layers=2</code> with <code class="inline-code">hidden_size=256</code>. With 2 layers, the LSTM's built-in dropout actually kicks in, giving the model more capacity with proper regularization.</p>
+<pre><span class="diff-comment"># Current architecture: ~100K params — likely underfitting</span>
+<span class="diff-rm">hidden_size = 128, num_layers = 1</span>
+<span class="diff-comment"># Recommended: ~400K params — better capacity</span>
+<span class="diff-add">hidden_size = 256, num_layers = 2, dropout = 0.3</span>
+</pre>
+  <div class="impact"><span class="impact-label">Impact:</span><div class="impact-bar filled high"></div><div class="impact-bar filled high"></div><div class="impact-bar filled high"></div><div class="impact-bar filled high"></div><div class="impact-bar"></div></div>
+</div>
+
+<div class="card">
+  <h3><span class="icon">⚡</span> 6. Add Temporal Attention over LSTM Output <span class="severity high">HIGH</span></h3>
+  <p>You only use the <strong>last hidden state</strong> (<code class="inline-code">out[:, -1, :]</code>). This discards 59 out of 60 timestep representations. For QoE forecasting, critical degradation patterns (brief spikes in jitter, short packet loss bursts) can appear at any position in the window.</p>
+  <p><strong>Fix:</strong> Add a simple attention layer that learns which timesteps matter most:</p>
+<pre>class TemporalAttention(nn.Module):
+    def __init__(self, hidden_size):
+        super().__init__()
+        self.attn = nn.Linear(hidden_size, 1)
+
+    def forward(self, lstm_out):
+        <span class="diff-comment"># lstm_out: (batch, seq_len, hidden)</span>
+        scores = self.attn(lstm_out).squeeze(-1)    <span class="diff-comment"># (batch, seq_len)</span>
+        weights = torch.softmax(scores, dim=1)      <span class="diff-comment"># (batch, seq_len)</span>
+        context = (lstm_out * weights.unsqueeze(-1)).sum(dim=1)
+        return context  <span class="diff-comment"># (batch, hidden)</span>
+</pre>
+  <p>Then replace <code class="inline-code">last = out[:, -1, :]</code> with <code class="inline-code">last = self.attention(out)</code>.</p>
+  <div class="impact"><span class="impact-label">Impact:</span><div class="impact-bar filled high"></div><div class="impact-bar filled high"></div><div class="impact-bar filled high"></div><div class="impact-bar filled high"></div><div class="impact-bar filled high"></div></div>
+</div>
+
+<div class="card">
+  <h3><span class="icon">⚡</span> 7. Classifier Head Too Shallow <span class="severity medium">MEDIUM</span></h3>
+  <p>Your classifier is <code class="inline-code">Linear(128→64) → GELU → Dropout → Linear(64→6)</code>. For a 6-class problem with subtle inter-class boundaries (e.g., HIGH_LATENCY vs NORMAL with slightly elevated delay), a deeper head can help:</p>
+<pre>self.classifier = nn.Sequential(
+    nn.Linear(hidden_size, hidden_size),
+    nn.GELU(),
+    nn.Dropout(dropout),
+    nn.Linear(hidden_size, hidden_size // 2),
+    nn.GELU(),
+    nn.Dropout(dropout * 0.5),
+    nn.Linear(hidden_size // 2, num_classes),
+)</pre>
+  <div class="impact"><span class="impact-label">Impact:</span><div class="impact-bar filled"></div><div class="impact-bar filled"></div><div class="impact-bar"></div><div class="impact-bar"></div><div class="impact-bar"></div></div>
+</div>
+
+<div class="card">
+  <h3><span class="icon">⚡</span> 8. Consider a Transformer Encoder Alternative <span class="severity medium">MEDIUM</span></h3>
+  <p>Your 60-timestep window is well-suited for a lightweight Transformer encoder. Self-attention can directly model relationships between any two timesteps without the LSTM's sequential bottleneck. A 2-layer, 4-head transformer with positional encoding would be a strong upgrade, especially for detecting patterns like "jitter spike at t=10 followed by latency degradation at t=45".</p>
+  <p>This is a bigger change, so treat it as a v2 experiment rather than an immediate fix.</p>
+  <div class="impact"><span class="impact-label">Impact:</span><div class="impact-bar filled high"></div><div class="impact-bar filled high"></div><div class="impact-bar filled high"></div><div class="impact-bar filled high"></div><div class="impact-bar"></div></div>
+</div>
+
+<div class="card">
+  <h3><span class="icon">⚡</span> 9. Reduce Window Size from 60 to 30-40 <span class="severity medium">MEDIUM</span></h3>
+  <p>Window size of 60 with horizon 5 means you're looking ~120s back to predict ~10s ahead. For network QoE, the most predictive signal is usually in the last 30-60 seconds. The first half of the window is mostly noise that the LSTM must learn to ignore.</p>
+  <p><strong>Test:</strong> Try <code class="inline-code">window_size=30</code> and <code class="inline-code">window_size=40</code>. You'll get more training sequences (fewer are lost to the window) and the model can focus on recent patterns.</p>
+  <div class="impact"><span class="impact-label">Impact:</span><div class="impact-bar filled"></div><div class="impact-bar filled"></div><div class="impact-bar filled"></div><div class="impact-bar"></div><div class="impact-bar"></div></div>
+</div>
+
+</div>
+
+<!-- ═══════════════════════════ DATA & FEATURES ═══════════════════════════ -->
+<div class="section" id="data">
+
+<div class="card">
+  <h3><span class="icon">📊</span> 10. Drop Low-Information Features <span class="severity high">HIGH</span></h3>
+  <p>You're feeding 76 features into the LSTM. Many are redundant or noisy:</p>
+  <ul>
+    <li><code class="inline-code">video_start_time_ms</code> — corrupted (max 3e15), even clipped it's mostly 0. <strong>Drop it.</strong></li>
+    <li><code class="inline-code">streaming_mos</code> — mean 1.36, mostly near 0, very low variance. The rolling stats on this are pure noise.</li>
+    <li>One-hot <code class="inline-code">segment_*</code> columns are constant within each segment's data (since you process per-segment). These columns are always [1,0,0,0] for INTERNET, etc. <strong>They carry zero information.</strong></li>
+    <li>Rolling max (<code class="inline-code">*_rmax</code>) is highly correlated with rolling mean. Keep mean + std, drop max.</li>
+  </ul>
+  <p><strong>Estimated reduction:</strong> 76 → ~50-55 features, with cleaner signal.</p>
+  <div class="impact"><span class="impact-label">Impact:</span><div class="impact-bar filled high"></div><div class="impact-bar filled high"></div><div class="impact-bar filled high"></div><div class="impact-bar filled high"></div><div class="impact-bar"></div></div>
+</div>
+
+<div class="card">
+  <h3><span class="icon">📊</span> 11. Add Cross-Feature Interaction Terms <span class="severity medium">MEDIUM</span></h3>
+  <p>You have good domain-specific engineered features (<code class="inline-code">voice_pressure</code>, <code class="inline-code">throughput_gap</code>, <code class="inline-code">stream_stress</code>). Add a few more that capture class-discriminative patterns:</p>
+<pre><span class="diff-comment"># Latency pressure: combines delay, RTT, and DNS</span>
+<span class="diff-add">df['latency_pressure'] = (</span>
+<span class="diff-add">    df['e2e_delay_ms'] / 200 +</span>
+<span class="diff-add">    df['ctrl_plane_rtt_ms'] / 100 +</span>
+<span class="diff-add">    df['dns_latency_ms'] / 1000</span>
+<span class="diff-add">) / 3</span>
+
+<span class="diff-comment"># Capacity indicator: ratio of flow_count to throughput</span>
+<span class="diff-add">df['capacity_ratio'] = df['flow_count'] / (df['throughput_mbps'] + 0.01)</span>
+
+<span class="diff-comment"># Call quality composite: setup time + CDR flag + voice quality</span>
+<span class="diff-add">df['call_risk'] = (</span>
+<span class="diff-add">    df['call_setup_time_ms'] / 10000 +</span>
+<span class="diff-add">    df['cdr_flag'] +</span>
+<span class="diff-add">    (5 - df['mos_voice']) / 4</span>
+<span class="diff-add">) / 3</span>
+</pre>
+  <div class="impact"><span class="impact-label">Impact:</span><div class="impact-bar filled"></div><div class="impact-bar filled"></div><div class="impact-bar filled"></div><div class="impact-bar"></div><div class="impact-bar"></div></div>
+</div>
+
+<div class="card">
+  <h3><span class="icon">📊</span> 12. Segment One-Hot Encoding Is Wasted <span class="severity high">HIGH</span></h3>
+  <p>Since you preprocess <strong>each segment independently</strong> and only concatenate the final sequences, the one-hot segment columns are constant within each segment's sequences. For INTERNET data, <code class="inline-code">segment_INTERNET=1</code> and all others are 0 — for every single row. The LSTM sees no variation on these features.</p>
+  <p><strong>Fix:</strong> Either drop the segment one-hot entirely (saves 4 features per sample), or train a single unified model across segments where the one-hot actually varies within batches.</p>
+  <div class="impact"><span class="impact-label">Impact:</span><div class="impact-bar filled high"></div><div class="impact-bar filled high"></div><div class="impact-bar filled high"></div><div class="impact-bar"></div><div class="impact-bar"></div></div>
+</div>
+
+<div class="card">
+  <h3><span class="icon">📊</span> 13. Lag Features May Be Redundant with Sequences <span class="severity medium">MEDIUM</span></h3>
+  <p>You compute <code class="inline-code">lag1, lag3, lag5</code> for 6 columns (= 18 extra features). But LSTM already has access to the raw values at timesteps t-1, t-3, t-5 through its window. These lags are explicitly encoding what the LSTM should learn to extract from the sequence.</p>
+  <p><strong>Keep the diffs</strong> (<code class="inline-code">*_diff</code>) — these encode rate of change which is harder for LSTM to learn. <strong>Drop the lags</strong> — saves 18 features. Test both configurations.</p>
+  <div class="impact"><span class="impact-label">Impact:</span><div class="impact-bar filled"></div><div class="impact-bar filled"></div><div class="impact-bar"></div><div class="impact-bar"></div><div class="impact-bar"></div></div>
+</div>
+
+</div>
+
+<!-- ═══════════════════════════ TRAINING ═══════════════════════════ -->
+<div class="section" id="train">
+
+<div class="card">
+  <h3><span class="icon">⚙️</span> 14. Focal Gamma Too Low <span class="severity high">HIGH</span></h3>
+  <p>You're using <code class="inline-code">focal_gamma=1.0</code>, which is almost standard cross-entropy. The original Focal Loss paper (Lin et al. 2017) recommends <code class="inline-code">gamma=2.0</code> as the default, and your problem has significant class imbalance (3.9x ratio).</p>
+  <p>With gamma=1.0, the focal modulation factor <code class="inline-code">(1-pt)^1</code> only provides mild down-weighting of easy examples. With gamma=2.0, a correctly classified sample with pt=0.9 gets weight 0.01 vs 0.1 — a 10x stronger focus on hard examples.</p>
+<pre><span class="diff-rm">focal_gamma = 1.0</span>
+<span class="diff-add">focal_gamma = 2.0  # Standard focal, much stronger on hard examples</span>
+</pre>
+  <div class="impact"><span class="impact-label">Impact:</span><div class="impact-bar filled high"></div><div class="impact-bar filled high"></div><div class="impact-bar filled high"></div><div class="impact-bar filled high"></div><div class="impact-bar"></div></div>
+</div>
+
+<div class="card">
+  <h3><span class="icon">⚙️</span> 15. Learning Rate Schedule Conflict <span class="severity high">HIGH</span></h3>
+  <p>You start with <code class="inline-code">lr=5e-5</code> (already very low) and use <code class="inline-code">ReduceLROnPlateau(factor=0.5, patience=5)</code>. After just one plateau, LR drops to 2.5e-5. After two, it's 1.25e-5 — effectively zero learning. Combined with <code class="inline-code">weight_decay=1.97e-3</code> (relatively aggressive for such a small LR), the optimizer is barely moving.</p>
+  <p><strong>Fix:</strong> Start with a higher LR and use a cosine schedule with warmup:</p>
+<pre><span class="diff-rm">lr = 5e-5</span>
+<span class="diff-add">lr = 3e-4  # 6x higher starting point</span>
+
+<span class="diff-comment"># Replace ReduceLROnPlateau with CosineAnnealingWarmRestarts</span>
+<span class="diff-add">scheduler = torch.optim.lr_scheduler.CosineAnnealingWarmRestarts(</span>
+<span class="diff-add">    optimizer, T_0=15, T_mult=2, eta_min=1e-6</span>
+<span class="diff-add">)</span>
+<span class="diff-comment"># Call scheduler.step() every epoch (not with val metric)</span>
+</pre>
+  <div class="impact"><span class="impact-label">Impact:</span><div class="impact-bar filled high"></div><div class="impact-bar filled high"></div><div class="impact-bar filled high"></div><div class="impact-bar filled high"></div><div class="impact-bar filled high"></div></div>
+</div>
+
+<div class="card">
+  <h3><span class="icon">⚙️</span> 16. Class Weight Caps Are Counter-Productive <span class="severity medium">MEDIUM</span></h3>
+  <p>You compute balanced class weights, then manually cap HIGH_LATENCY by 0.8x and CALL_DROP by 0.6x. But CALL_DROP is also in <code class="inline-code">minority_boost_classes</code> with <code class="inline-code">minority_boost=1.0</code>. So the net effect for CALL_DROP is: balanced_weight × 1.0 (boost) × 0.6 (cap) = 0.6 × balanced_weight. You're actively <strong>suppressing</strong> the already-minority class!</p>
+  <p><strong>Fix:</strong> If CALL_DROP is over-predicted, the issue isn't the class weight — it's likely confusion with similar degradation patterns. Fix the features/architecture first, then adjust weights.</p>
+<pre><span class="diff-comment"># Remove contradictory caps, let balanced weights work</span>
+<span class="diff-rm">WEIGHT_CAPS = {'HIGH_LATENCY': 0.8, 'CALL_DROP': 0.6}</span>
+<span class="diff-add">WEIGHT_CAPS = {}  # Let Focal Loss handle hard examples</span>
+</pre>
+  <div class="impact"><span class="impact-label">Impact:</span><div class="impact-bar filled high"></div><div class="impact-bar filled high"></div><div class="impact-bar filled high"></div><div class="impact-bar"></div><div class="impact-bar"></div></div>
+</div>
+
+<div class="card">
+  <h3><span class="icon">⚙️</span> 17. Add Mixup Augmentation <span class="severity medium">MEDIUM</span></h3>
+  <p>Time-series Mixup is a simple but effective regularizer. Interpolate between two random training sequences and their labels to create synthetic training data. This reduces overfitting and improves decision boundaries:</p>
+<pre>def mixup_data(x, y, alpha=0.2):
+    lam = np.random.beta(alpha, alpha)
+    idx = torch.randperm(x.size(0))
+    mixed_x = lam * x + (1 - lam) * x[idx]
+    y_a, y_b = y, y[idx]
+    return mixed_x, y_a, y_b, lam
+
+def mixup_criterion(criterion, pred, y_a, y_b, lam):
+    return lam * criterion(pred, y_a) + (1-lam) * criterion(pred, y_b)
+</pre>
+  <div class="impact"><span class="impact-label">Impact:</span><div class="impact-bar filled"></div><div class="impact-bar filled"></div><div class="impact-bar filled"></div><div class="impact-bar"></div><div class="impact-bar"></div></div>
+</div>
+
+</div>
+
+<!-- ═══════════════════════════ CODE FIXES ═══════════════════════════ -->
+<div class="section" id="code">
+
+<div class="card">
+  <h3><span class="icon">📝</span> Priority Fix Order (apply in this sequence)</h3>
+  <p>Start with the changes that have the highest impact-to-effort ratio:</p>
+  <ul>
+    <li><strong>Step 1 — Fix data leaks (Bugs #1, #2):</strong> Fix scaler reuse and replace bfill/interpolate with forward-fill. This gives you a true baseline.</li>
+    <li><strong>Step 2 — Drop dead features (#10, #12):</strong> Remove segment one-hot, video_start_time_ms, rolling max, lag features. Go from 76 → ~55 features.</li>
+    <li><strong>Step 3 — Fix training (#14, #15):</strong> Raise focal_gamma to 2.0, raise LR to 3e-4, switch to cosine schedule. Remove weight caps (#16).</li>
+    <li><strong>Step 4 — Upgrade architecture (#5, #6):</strong> Add temporal attention and increase to 2 layers / 256 hidden. This is your biggest single-change win.</li>
+    <li><strong>Step 5 — Fine-tune (#4, #11, #17):</strong> Add missing indicator for dataplane_latency, add interaction features, test Mixup.</li>
+  </ul>
+</div>
+
+<div class="card">
+  <h3><span class="icon">📝</span> Complete Improved Model Class</h3>
+<pre>class LSTMForecasterV2(nn.Module):
+    """LSTM with temporal attention for QoE forecasting."""
+
+    def __init__(self, input_size, hidden_size, num_layers,
+                 num_classes, dropout):
+        super().__init__()
+        self.lstm = nn.LSTM(
+            input_size=input_size,
+            hidden_size=hidden_size,
+            num_layers=num_layers,
+            batch_first=True,
+            dropout=dropout if num_layers > 1 else 0.0,
+        )
+        self.layer_norm = nn.LayerNorm(hidden_size)
+
+        <span class="diff-comment"># Temporal attention — learns which timesteps matter</span>
+        <span class="diff-add">self.attn_proj = nn.Linear(hidden_size, 1)</span>
+
+        self.classifier = nn.Sequential(
+            nn.Linear(hidden_size, hidden_size),
+            nn.GELU(),
+            nn.Dropout(dropout),
+            nn.Linear(hidden_size, hidden_size // 2),
+            nn.GELU(),
+            nn.Dropout(dropout * 0.5),
+            nn.Linear(hidden_size // 2, num_classes),
+        )
+
+    def forward(self, x):
+        out, _ = self.lstm(x)  <span class="diff-comment"># (B, T, H)</span>
+        out = self.layer_norm(out)
+
+        <span class="diff-comment"># Attention-weighted pooling instead of last-only</span>
+        <span class="diff-add">scores = self.attn_proj(out).squeeze(-1)  # (B, T)</span>
+        <span class="diff-add">weights = torch.softmax(scores, dim=1)    # (B, T)</span>
+        <span class="diff-add">ctx = (out * weights.unsqueeze(-1)).sum(1) # (B, H)</span>
+
+        return self.classifier(ctx)</pre>
+</div>
+
+<div class="card">
+  <h3><span class="icon">📝</span> Recommended CFG Updates</h3>
+<pre>CFG = dict(
+    <span class="diff-comment"># Data — reduce window, keep horizon</span>
+    window_size   = <span class="diff-add">40</span>,        <span class="diff-comment"># was 60</span>
+    horizon       = 5,
+
+    <span class="diff-comment"># Architecture — bigger model with attention</span>
+    hidden_size   = <span class="diff-add">256</span>,       <span class="diff-comment"># was 128</span>
+    num_layers    = <span class="diff-add">2</span>,         <span class="diff-comment"># was 1</span>
+    dropout       = <span class="diff-add">0.3</span>,       <span class="diff-comment"># was 0.27</span>
+
+    <span class="diff-comment"># Training — higher LR, stronger focal</span>
+    lr            = <span class="diff-add">3e-4</span>,      <span class="diff-comment"># was 5e-5</span>
+    focal_gamma   = <span class="diff-add">2.0</span>,       <span class="diff-comment"># was 1.0</span>
+    weight_decay  = <span class="diff-add">1e-3</span>,      <span class="diff-comment"># was 1.97e-3</span>
+    clip_grad     = <span class="diff-add">1.0</span>,       <span class="diff-comment"># was 0.5 — more room with higher LR</span>
+    patience      = <span class="diff-add">15</span>,        <span class="diff-comment"># was 12</span>
+
+    <span class="diff-comment"># Class balancing — remove contradictions</span>
+    minority_boost = <span class="diff-add">1.5</span>,      <span class="diff-comment"># was 1.0 (no effect!)</span>
+
+    <span class="diff-comment"># Keep rest as-is</span>
+    batch_size      = 128,
+    max_epochs      = 100,
+    label_smoothing = <span class="diff-add">0.05</span>,   <span class="diff-comment"># was 0.0 — mild smoothing helps</span>
+    roll_window     = 10,
+    lag_steps       = [1, 3, 5],
+    train_frac      = 0.70,
+    val_frac        = 0.15,
+    transition_oversample = 3,
+)</pre>
+</div>
+
+</div>
+
+</div>
+
+<script>
+function show(id) {
+  document.querySelectorAll('.section').forEach(s => s.classList.remove('active'));
+  document.querySelectorAll('.nav button').forEach(b => b.classList.remove('active'));
+  document.getElementById(id).classList.add('active');
+  event.target.classList.add('active');
+}
+</script>
+</body>
+</html>

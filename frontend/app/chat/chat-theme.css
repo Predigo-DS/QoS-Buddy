@@ -1,0 +1,48 @@
+.chat-theme .bg-white,
+.chat-theme .bg-gray-50,
+.chat-theme .bg-gray-100,
+.chat-theme .bg-slate-50 {
+  background-color: hsl(var(--surface));
+}
+
+.chat-theme .text-gray-800,
+.chat-theme .text-slate-800,
+.chat-theme .text-gray-900,
+.chat-theme .text-slate-900 {
+  color: hsl(var(--text-main));
+}
+
+.chat-theme .text-gray-700,
+.chat-theme .text-slate-700,
+.chat-theme .text-gray-600,
+.chat-theme .text-slate-600,
+.chat-theme .text-gray-500,
+.chat-theme .text-slate-500 {
+  color: hsl(var(--muted));
+}
+
+.chat-theme .border,
+.chat-theme .border-gray-200,
+.chat-theme .border-gray-300,
+.chat-theme .border-slate-200,
+.chat-theme .border-slate-300 {
+  border-color: hsl(var(--border));
+}
+
+.chat-theme .hover\:bg-gray-50:hover,
+.chat-theme .hover\:bg-gray-100:hover,
+.chat-theme .hover\:bg-slate-100:hover,
+.chat-theme .hover\:bg-slate-200:hover {
+  background-color: hsl(var(--surface));
+}
+
+.chat-theme textarea,
+.chat-theme input,
+.chat-theme select {
+  color: hsl(var(--text-main));
+}
+
+.chat-theme input::placeholder,
+.chat-theme textarea::placeholder {
+  color: hsl(var(--muted));
+}

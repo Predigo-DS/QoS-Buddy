@@ -1,6 +1,8 @@
 import os
 import uuid
 import io
+import math
+import hashlib
 from datetime import datetime, timezone
 from qdrant_client import QdrantClient
 from qdrant_client.models import (
@@ -16,8 +18,6 @@ from qdrant_client.models import (
     Modifier,
     PayloadSchemaType,
     Prefetch,
-    FusionQuery,
-    Fusion,
     RrfQuery,
     Rrf,
     DatetimeRange,
@@ -28,18 +28,44 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
+
+def normalize_score(score: float, search_type: str, is_rrf: bool = False) -> float:
+    """
+    Normalize search scores to 0-1 range for consistent display.
+
+    Args:
+        score: Raw score from Qdrant
+        search_type: "hybrid", "semantic", or "keyword"
+        is_rrf: Whether this is an RRF-fused score
+
+    Returns:
+        Normalized score between 0 and 1
+    """
+    if is_rrf or search_type == "hybrid":
+        return min(1.0, max(0.0, score * 1.5))
+
+    elif search_type == "semantic":
+        return max(0.0, min(1.0, (score + 1.0) / 2.0))
+
+    elif search_type == "keyword":
+        return 1.0 / (1.0 + math.exp(-score / 10.0))
+
+    return max(0.0, min(1.0, score))
+
+
 COLLECTION = os.getenv("QDRANT_COLLECTION", "qos_buddy")
-VECTOR_SIZE = 384  # dimension all-MiniLM-L6-v2
-CHUNK_SIZE = int(os.getenv("CHUNK_SIZE", 512))
-CHUNK_OVERLAP = int(os.getenv("CHUNK_OVERLAP", 64))
+VECTOR_SIZE = 1024  # bge-m3 dense dimension
+CHUNK_SIZE = int(os.getenv("CHUNK_SIZE", 1024))
+CHUNK_OVERLAP = int(os.getenv("CHUNK_OVERLAP", 128))
 
 
 class VectorStoreClient:
-    def __init__(self):
+    def __init__(self, embedder=None):
         self.client = QdrantClient(
             host=os.getenv("QDRANT_HOST", "qdrant"),
             port=int(os.getenv("QDRANT_PORT", 6333)),
         )
+        self.embedder = embedder
         self._ensure_collection()
 
     def _create_payload_indexes(self):
@@ -49,30 +75,23 @@ class VectorStoreClient:
                 field_name="data_category",
                 field_schema=PayloadSchemaType.KEYWORD,
             )
-
-            # tenant_id: keyword index with tenant optimization
             self.client.create_payload_index(
                 collection_name=COLLECTION,
                 field_name="tenant_id",
                 field_schema=PayloadSchemaType.KEYWORD,
             )
-
-            # access_level: keyword index for exact matching
             self.client.create_payload_index(
                 collection_name=COLLECTION,
                 field_name="access_level",
                 field_schema=PayloadSchemaType.KEYWORD,
             )
-
-            # expires_at: datetime index for expiration filtering
             self.client.create_payload_index(
                 collection_name=COLLECTION,
                 field_name="expires_at",
                 field_schema=PayloadSchemaType.DATETIME,
             )
-
         except Exception as e:
-            print(f"Warining : could not create payload indexes: {e}")
+            print(f"Warning: could not create payload indexes: {e}")
 
     def _ensure_collection(self):
         names = [c.name for c in self.client.get_collections().collections]
@@ -88,38 +107,30 @@ class VectorStoreClient:
             )
             self._create_payload_indexes()
 
-    def _generate_sparse_vector(self, text: str) -> SparseVector:
-        import re
-        import hashlib
-
-        tokens = re.findall(r"\b[a-zA-Z0-9]{2,}\b", text.lower())
-        term_freq: dict[str, int] = {}
-        for token in tokens:
-            term_freq[token] = term_freq.get(token, 0) + 1
-
-        # Convert to sparse vector format
-        # Use hash of term as index (deterministic mapping)
-        # Aggregate values for hash collisions
+    def _convert_sparse_to_qdrant(self, sparse_dict: dict) -> SparseVector:
+        """Convert bge-m3 sparse vector (token_id -> weight dict) to Qdrant SparseVector.
+        
+        bge-m3 token IDs can exceed Qdrant's 65536 limit, so we hash them deterministically.
+        """
+        if not sparse_dict:
+            return SparseVector(indices=[], values=[])
+        
         index_to_value: dict[int, float] = {}
-
-        for term, freq in term_freq.items():
-            # Hash term to get consistent index (0-65535 range)
-            term_hash = int(hashlib.md5(term.encode()).hexdigest()[:8], 16) % 65536
-            # Aggregate values for duplicate indices (handle collisions)
-            index_to_value[term_hash] = index_to_value.get(term_hash, 0.0) + float(freq)
-
-        # Convert to sorted lists (required by Qdrant)
+        for token_id, weight in sparse_dict.items():
+            hashed_idx = int(hashlib.md5(str(token_id).encode()).hexdigest()[:8], 16) % 65536
+            index_to_value[hashed_idx] = index_to_value.get(hashed_idx, 0.0) + float(weight)
+        
         sorted_items = sorted(index_to_value.items())
-        indices = [item[0] for item in sorted_items]
-        values = [item[1] for item in sorted_items]
-
+        indices = [idx for idx, _ in sorted_items]
+        values = [val for _, val in sorted_items]
         return SparseVector(indices=indices, values=values)
 
     def reset_collection(self):
         self.client.delete_collection(COLLECTION)
         self._ensure_collection()
 
-    def ingest_text(self, text: str, metadata: dict, embedder) -> list[str]:
+    def ingest_text(self, text: str, metadata: dict, embedder=None) -> list[str]:
+        embedder = embedder or self.embedder
         payload_metadata = dict(metadata or {})
         payload_metadata.setdefault(
             "ingested_at", datetime.now(timezone.utc).isoformat()
@@ -131,14 +142,18 @@ class VectorStoreClient:
         chunks = splitter.split_text(text)
         if not chunks:
             return []
-        dense_vectors = embedder.encode(chunks).tolist()
+
+        # bge-m3 returns dict with 'dense_vecs', 'sparse_vecs', 'lexical_weights'
+        result = embedder.encode(chunks, return_dense=True, return_sparse=True, return_colbert_vecs=False)
+        dense_vectors = result['dense_vecs'].tolist()
+        sparse_vectors_list = result['sparse_vecs']
 
         points, ids = [], []
-        for chunk, dense_vec in zip(chunks, dense_vectors):
+        for chunk, dense_vec, sparse_dict in zip(chunks, dense_vectors, sparse_vectors_list):
             pid = str(uuid.uuid4())
             ids.append(pid)
 
-            sparse_vec = self._generate_sparse_vector(chunk)
+            sparse_vec = self._convert_sparse_to_qdrant(sparse_dict)
             points.append(
                 PointStruct(
                     id=pid,
@@ -152,17 +167,21 @@ class VectorStoreClient:
     def hybrid_search(
         self,
         query: str,
-        embedder,
+        embedder=None,
         top_k: int = 10,
         tenant_id: str = None,
         data_category: str = None,
         access_levels: list[str] = None,
         dense_weight: float = 0.7,
+        min_score: float = 0.5,
     ) -> list[dict]:
-        from datetime import datetime
+        embedder = embedder or self.embedder
 
-        dense_query_vector = embedder.encode([query]).tolist()[0]
-        sparse_query_vector = self._generate_sparse_vector(query)
+        # bge-m3 query encoding
+        query_result = embedder.encode([query], return_dense=True, return_sparse=True, return_colbert_vecs=False)
+        dense_query_vector = query_result['dense_vecs'].tolist()[0]
+        query_sparse_dict = query_result['sparse_vecs'][0]
+        sparse_query_vector = self._convert_sparse_to_qdrant(query_sparse_dict)
 
         filter_conditions = []
 
@@ -183,15 +202,10 @@ class VectorStoreClient:
                 FieldCondition(key="access_level", match=MatchValue(any=access_levels))
             )
 
-        # Combine filters
         search_filter = Filter(must=filter_conditions) if filter_conditions else None
 
-        # Calculate weights for RRF fusion
-        # dense_weight: 0.0-1.0 (higher = more weight on dense/semantic)
-        # sparse_weight: 1.0 - dense_weight (inverse)
         sparse_weight = 1.0 - dense_weight
 
-        # Perform hybrid search with prefetch and weighted RRF fusion
         results = self.client.query_points(
             collection_name=COLLECTION,
             prefetch=[
@@ -213,17 +227,25 @@ class VectorStoreClient:
             with_payload=True,
         )
 
-        # Format results
-        return [
-            {
-                "text": r.payload.get("text", ""),
-                "score": r.score,
-                "metadata": {
-                    key: value for key, value in r.payload.items() if key != "text"
-                },
-            }
-            for r in results.points
-        ]
+        normalized_results = []
+        for r in results.points:
+            norm_score = normalize_score(r.score, "hybrid", is_rrf=True)
+
+            if norm_score >= min_score:
+                normalized_results.append(
+                    {
+                        "text": r.payload.get("text", ""),
+                        "score": norm_score,
+                        "raw_score": float(r.score),
+                        "metadata": {
+                            key: value
+                            for key, value in r.payload.items()
+                            if key != "text"
+                        },
+                    }
+                )
+
+        return normalized_results
 
     def search(self, query_vector: list[float], top_k: int = 5) -> list[dict]:
         results = self.client.query_points(
@@ -241,17 +263,20 @@ class VectorStoreClient:
     def keyword_search(
         self,
         query: str,
+        embedder=None,
         top_k: int = 10,
         tenant_id: str = None,
         data_category: str = None,
         access_levels: list[str] = None,
+        min_score: float = 0.5,
     ) -> list[dict]:
-        """Keyword-only search using sparse vectors"""
-        from datetime import datetime
+        """Keyword-only search using sparse vectors from bge-m3"""
+        embedder = embedder or self.embedder
 
-        sparse_query_vector = self._generate_sparse_vector(query)
+        query_result = embedder.encode([query], return_dense=False, return_sparse=True, return_colbert_vecs=False)
+        query_sparse_dict = query_result['sparse_vecs'][0]
+        sparse_query_vector = self._convert_sparse_to_qdrant(query_sparse_dict)
 
-        # Build filter
         filter_conditions = []
 
         if tenant_id:
@@ -273,7 +298,6 @@ class VectorStoreClient:
 
         search_filter = Filter(must=filter_conditions) if filter_conditions else None
 
-        # Search using only sparse vectors (keyword matching)
         results = self.client.query_points(
             collection_name=COLLECTION,
             query=sparse_query_vector,
@@ -283,16 +307,25 @@ class VectorStoreClient:
             with_payload=True,
         )
 
-        return [
-            {
-                "text": r.payload.get("text", ""),
-                "score": r.score,
-                "metadata": {
-                    key: value for key, value in r.payload.items() if key != "text"
-                },
-            }
-            for r in results.points
-        ]
+        normalized_results = []
+        for r in results.points:
+            norm_score = normalize_score(r.score, "keyword")
+
+            if norm_score >= min_score:
+                normalized_results.append(
+                    {
+                        "text": r.payload.get("text", ""),
+                        "score": norm_score,
+                        "raw_score": float(r.score),
+                        "metadata": {
+                            key: value
+                            for key, value in r.payload.items()
+                            if key != "text"
+                        },
+                    }
+                )
+
+        return normalized_results
 
     def list_documents(self, limit: int = 500) -> list[dict]:
         documents: dict[str, dict] = {}
@@ -322,8 +355,8 @@ class VectorStoreClient:
 
                 documents[source]["chunk_count"] += 1
                 if ingested_at and (
-                    documents[source]["last_updated"] is None
-                    or ingested_at > documents[source]["last_updated"]
+                    documents[source]["last_updated"] is None or
+                    ingested_at > documents[source]["last_updated"]
                 ):
                     documents[source]["last_updated"] = ingested_at
 
