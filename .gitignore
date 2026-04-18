@@ -209,3 +209,5 @@ __marimo__/
 # Node / Next.js
 node_modules/
 .next/
+
+.opencode
