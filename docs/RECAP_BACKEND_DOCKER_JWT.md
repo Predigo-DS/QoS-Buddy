@@ -3,6 +3,7 @@
 Date: 2026-04-10
 
 ## 1) Objectif et contexte
+
 Ce document récapitule **tout ce qui a été mis en place** dans le dossier `backend/` pour obtenir :
 
 - Un backend **Spring Boot (Java 17)** structuré en **N‑Tier**.
@@ -22,6 +23,7 @@ Ce document récapitule **tout ce qui a été mis en place** dans le dossier `ba
 ## 2) Stack technique & décisions
 
 ### Backend
+
 - **Spring Boot 3.3.4**, **Java 17**, **Maven**
 - REST: `spring-boot-starter-web`
 - Persistance: `spring-boot-starter-data-jpa` + `postgresql` (runtime)
@@ -30,10 +32,12 @@ Ce document récapitule **tout ce qui a été mis en place** dans le dossier `ba
 - Swagger/OpenAPI: `springdoc-openapi-starter-webmvc-ui`
 
 ### Sécurité / JWT
+
 - `spring-boot-starter-security`
 - JWT: **JJWT 0.11.5** (`jjwt-api` + `jjwt-impl` + `jjwt-jackson`)
 
 ### Docker
+
 - `docker-compose.yml` à la racine pour orchestrer Postgres/Redis/Backend.
 - `backend/Dockerfile` en **multi-stage** : build Maven dans Docker → run JRE.
 
@@ -41,21 +45,25 @@ Ce document récapitule **tout ce qui a été mis en place** dans le dossier `ba
 
 ## 2bis) Chronologie des actions (ce qui a été fait)
 
-1) **Scaffold Spring Boot (backend/)**
+1. **Scaffold Spring Boot (backend/)**
+
 - Création du module Maven `backend/` avec Spring Boot 3.3.4, Java 17.
 - Mise en place d’une arborescence N‑Tier (controllers/services/repositories/entities/dtos/config/exceptions).
 
-2) **Ajout JWT stateless + Spring Security**
+2. **Ajout JWT stateless + Spring Security**
+
 - Ajout des dépendances Spring Security + JJWT.
 - Ajout des endpoints publics `/api/auth/register` et `/api/auth/login`.
 - Ajout du filtre `JwtAuthenticationFilter` et des règles de sécurité dans `SecurityConfig`.
 - Ajout du schéma Bearer dans Swagger/OpenAPI (`OpenApiConfig`).
 
-3) **Docker-only workflow (sans Maven local)**
+3. **Docker-only workflow (sans Maven local)**
+
 - Ajout d’un `backend/Dockerfile` multi-stage : build Maven dans Docker puis exécution JRE.
 - Ajout d’un `docker-compose.yml` à la racine : Postgres 16 + Redis 7 + backend.
 
-4) **Debug & stabilisation runtime Docker**
+4. **Debug & stabilisation runtime Docker**
+
 - Problème : dépendance circulaire Spring (entre config sécurité et filtre) lors du démarrage.
   - Correction : injection du filtre directement dans la méthode bean `securityFilterChain(...)`.
 - Problème Windows : ports hôtes déjà occupés (ex: 8080, 6379).
@@ -63,7 +71,8 @@ Ce document récapitule **tout ce qui a été mis en place** dans le dossier `ba
 - Problème JWT : secret non compatible Base64 (erreur `Illegal base64 character: '_'`).
   - Correction : `JwtService#getSigningKey()` accepte secret raw UTF‑8 ou Base64/Base64URL + fallback safe.
 
-5) **Validation**
+5. **Validation**
+
 - Vérification que Swagger répond en HTTP 200 sur `http://localhost:8081/...`.
 - Vérification de la persistance dans Postgres via `docker exec ... psql` (tables + lignes insérées).
 
@@ -85,13 +94,13 @@ Le backend est organisé de façon classique :
 ## 4) Docker — orchestration et commandes nécessaires
 
 ### 4.1 Fichier docker-compose (source de vérité)
+
 Le fichier utilisé est celui-ci (contenu exact actuel):
 
 ```yml
 version: "3.9"
 
 services:
-
   postgres:
     image: postgres:16
     container_name: qosentry-postgres
@@ -148,6 +157,7 @@ volumes:
 > Remarque : Docker Compose v2 affiche un warning `version is obsolete`. Ce champ est ignoré par Compose v2 ; ce n’est pas bloquant.
 
 ### 4.2 Dockerfile backend (build Maven dans Docker)
+
 Contenu exact actuel :
 
 ```dockerfile
@@ -167,6 +177,7 @@ ENTRYPOINT ["java", "-jar", "app.jar"]
 ```
 
 ### 4.2bis .dockerignore (optimisation du build)
+
 Contenu exact actuel :
 
 ```gitignore
@@ -178,6 +189,7 @@ target/
 ```
 
 ### 4.3 Commandes Docker (workflow)
+
 Depuis la racine du repo :
 
 - Démarrer (build + run) :
@@ -210,6 +222,7 @@ Depuis la racine du repo :
 ## 5) Configuration Spring (YAML + variables d’environnement)
 
 ### 5.1 application.yml (local/dev)
+
 Contenu exact actuel :
 
 ```yml
@@ -253,12 +266,14 @@ app:
 ```
 
 Important :
+
 - En **Docker**, ce YAML est surchargé par les variables du `docker-compose.yml` :
   - `SPRING_DATASOURCE_URL`, `SPRING_DATA_REDIS_HOST`, etc.
   - `APP_JWT_SECRET` → bind vers `app.jwt.secret`
   - `APP_JWT_EXPIRATION_MS` → bind vers `app.jwt.expiration-ms`
 
 ### 5.2 application-dev.yml
+
 Contenu exact actuel :
 
 ```yml
@@ -282,6 +297,7 @@ logging:
 ## 6) JWT — principe + logique exacte implémentée
 
 ### 6.1 Principe (stateless)
+
 - Le backend **ne maintient pas de session serveur**.
 - Le client s’authentifie via `/api/auth/login` (ou s’inscrit via `/api/auth/register`).
 - Le backend renvoie un **JWT**.
@@ -290,12 +306,14 @@ logging:
 `Authorization: Bearer <TOKEN>`
 
 ### 6.2 Contenu minimal du JWT (dans cette implémentation)
+
 - `sub` (subject) : `username`
 - `iat` : date d’émission
 - `exp` : date d’expiration
 - Signature : **HS256** (HMAC-SHA256) avec le secret `app.jwt.secret`
 
 ### 6.3 Génération du token (JwtService)
+
 Extrait complet du service (contenu exact actuel):
 
 ```java
@@ -401,6 +419,7 @@ public class JwtService {
 ```
 
 Pourquoi cette logique de secret ?
+
 - Un bug initial est arrivé quand le secret contenait `_` (décodage Base64).
 - La version actuelle accepte :
   - Secret **raw** (UTF‑8) recommandé en local
@@ -408,6 +427,7 @@ Pourquoi cette logique de secret ?
 - Et évite d’utiliser une clé “trop courte” (minimum 32 bytes pour HS256).
 
 ### 6.4 Filtre JWT (lecture Authorization + SecurityContext)
+
 Contenu exact actuel :
 
 ```java
@@ -474,6 +494,7 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
 ```
 
 ### 6.5 Règles de sécurité (SecurityConfig)
+
 Contenu exact actuel :
 
 ```java
@@ -537,6 +558,7 @@ public class SecurityConfig {
 ```
 
 ### 6.6 Endpoints d’auth (controller + service)
+
 Controller actuel :
 
 ```java
@@ -822,6 +844,7 @@ public interface UserRepository extends JpaRepository<User, UUID> {
 ```
 
 ### 6.7 Swagger + Bearer JWT
+
 Le Swagger est configuré pour exposer un schéma Bearer nommé `bearerAuth`.
 
 Contenu exact actuel :
@@ -887,12 +910,14 @@ qosentry-backend:  image=esprit-pi-4ds9-2526-qosentry-backend, status=exited
 ## 8) Vérifications rapides (API)
 
 Quand le stack est up, l’API est accessible via :
+
 - Swagger UI : `http://localhost:8081/swagger-ui/index.html`
 - OpenAPI JSON : `http://localhost:8081/v3/api-docs`
 
 Exemples avec `curl` :
 
 - Register :
+
 ```bash
 curl -X POST "http://localhost:8081/api/auth/register" \
   -H "Content-Type: application/json" \
@@ -900,6 +925,7 @@ curl -X POST "http://localhost:8081/api/auth/register" \
 ```
 
 - Login :
+
 ```bash
 curl -X POST "http://localhost:8081/api/auth/login" \
   -H "Content-Type: application/json" \
@@ -907,6 +933,7 @@ curl -X POST "http://localhost:8081/api/auth/login" \
 ```
 
 - Appel protégé (exemple) :
+
 ```bash
 curl -X GET "http://localhost:8081/api/secure" \
   -H "Authorization: Bearer <TOKEN>"
@@ -926,6 +953,7 @@ curl -X GET "http://localhost:8081/api/secure" \
 ---
 
 ## 10) Dépendances Maven (pom.xml)
+
 Pour référence, le `pom.xml` actuel contient notamment : Spring Web/JPA/Redis/Validation/Security, springdoc OpenAPI, et JJWT 0.11.5.
 
 (Le fichier est consultable dans `backend/pom.xml`.)
