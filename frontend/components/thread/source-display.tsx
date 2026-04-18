@@ -3,7 +3,7 @@ import { Card, CardContent } from "../ui/card";
 import { Button } from "../ui/button";
 import { Badge } from "../ui/badge";
 import { Separator } from "../ui/separator";
-import { ChevronDown, ChevronUp, FileText, Search, AlertTriangle, Sparkles } from "lucide-react";
+import { ChevronDown, ChevronUp, FileText, Search, Sparkles } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 type Source = {
@@ -24,10 +24,10 @@ type SourceDisplayProps = {
 };
 
 function getRelevanceColor(score: number): string {
-  if (score >= 0.8) return "bg-green-500";
-  if (score >= 0.6) return "bg-blue-500";
-  if (score >= 0.4) return "bg-yellow-500";
-  return "bg-gray-400";
+  if (score >= 0.8) return "bg-accent";
+  if (score >= 0.6) return "bg-primary";
+  if (score >= 0.4) return "bg-orange-400";
+  return "bg-muted";
 }
 
 function getRelevanceLabel(score: number): string {
@@ -69,22 +69,22 @@ export function SourceDisplay({ sources, searchType, rewrittenQueries, originalQ
   };
 
   const searchTypeLabel = searchType === "hybrid" 
-    ? "🔍 Hybrid Search" 
+    ? "Hybrid Search" 
     : searchType === "semantic"
-    ? "💭 Semantic Search"
-    : "🔤 Keyword Search";
+    ? "Semantic Search"
+    : "Keyword Search";
 
   return (
-    <Card className="mt-3 border-blue-200 bg-blue-50/50">
+    <Card className="mt-3 border-border bg-surface">
       <CardContent className="p-0">
         <Button
           variant="ghost"
           onClick={() => setExpanded(!expanded)}
-          className="w-full justify-between px-4 py-3 hover:bg-blue-100/50"
+          className="w-full justify-between px-4 py-3 hover:bg-surface"
         >
           <div className="flex items-center gap-2">
-            <FileText className="h-4 w-4 text-blue-600" />
-            <span className="font-medium text-blue-900">
+            <FileText className="h-4 w-4 text-primary" />
+            <span className="font-medium text-text-main">
               Sources ({totalSources} chunks from {uniqueDocuments} document{uniqueDocuments !== 1 ? "s" : ""})
             </span>
           </div>
@@ -93,28 +93,28 @@ export function SourceDisplay({ sources, searchType, rewrittenQueries, originalQ
               {searchTypeLabel}
             </Badge>
             {expanded ? (
-              <ChevronUp className="h-4 w-4 text-blue-600" />
+              <ChevronUp className="h-4 w-4 text-primary" />
             ) : (
-              <ChevronDown className="h-4 w-4 text-blue-600" />
+              <ChevronDown className="h-4 w-4 text-primary" />
             )}
           </div>
         </Button>
 
         {expanded && (
-          <div className="border-t border-blue-200">
+          <div className="border-t border-border">
             {/* Show rewritten queries if available */}
             {rewrittenQueries && rewrittenQueries.length > 0 && (
-              <div className="border-b border-blue-200 px-4 py-3 bg-purple-50">
+              <div className="border-b border-border px-4 py-3 bg-background">
                 <div className="flex items-start gap-2 text-sm">
-                  <Sparkles className="h-4 w-4 text-purple-600 mt-0.5" />
+                  <Sparkles className="h-4 w-4 text-primary mt-0.5" />
                   <div className="flex-1">
-                    <p className="font-medium text-gray-800 mb-1">Query optimized for better results:</p>
+                    <p className="font-medium text-text-main mb-1">Query optimized for better results:</p>
                     <div className="space-y-1">
                       {originalQuery && (
-                        <p className="text-xs text-gray-600 italic">Original: "{originalQuery}"</p>
+                        <p className="text-xs text-muted italic">Original: "{originalQuery}"</p>
                       )}
                       {rewrittenQueries.map((rq, idx) => (
-                        <p key={idx} className="text-xs text-purple-700">
+                        <p key={idx} className="text-xs text-primary">
                           → "{rq}"
                         </p>
                       ))}
@@ -129,8 +129,8 @@ export function SourceDisplay({ sources, searchType, rewrittenQueries, originalQ
                 {idx > 0 && <Separator className="my-3" />}
                 
                 <div className="px-4 py-2">
-                  <h4 className="font-semibold text-sm text-gray-800 flex items-center gap-2">
-                    <FileText className="h-3 w-3 text-blue-500" />
+                  <h4 className="font-semibold text-sm text-text-main flex items-center gap-2">
+                    <FileText className="h-3 w-3 text-primary" />
                     {docName}
                     <Badge variant="outline" className="ml-auto text-xs">
                       {docSources.length} chunk{docSources.length !== 1 ? "s" : ""}
@@ -150,12 +150,12 @@ export function SourceDisplay({ sources, searchType, rewrittenQueries, originalQ
                     return (
                       <div
                         key={key}
-                        className="border border-gray-200 rounded-lg overflow-hidden bg-white"
+                        className="border border-border rounded-lg overflow-hidden bg-background"
                       >
                         <Button
                           variant="ghost"
                           onClick={() => toggleExpand(key)}
-                          className="w-full justify-between px-3 py-2.5 text-left hover:bg-gray-50"
+                          className="w-full justify-between px-3 py-2.5 text-left hover:bg-background"
                         >
                           <div className="flex items-center gap-2 flex-1">
                             <div className="flex items-center gap-2">
@@ -166,11 +166,11 @@ export function SourceDisplay({ sources, searchType, rewrittenQueries, originalQ
                                 )}
                                 title={`${percentage}% relevance`}
                               />
-                              <span className="text-sm font-medium text-gray-700">
+                              <span className="text-sm font-medium text-text-main">
                                 Chunk #{sourceIdx + 1}
                               </span>
                             </div>
-                            <span className="text-xs text-gray-500 truncate max-w-[200px]">
+                            <span className="text-xs text-muted truncate max-w-[200px]">
                               {source.text}
                             </span>
                           </div>
@@ -178,35 +178,35 @@ export function SourceDisplay({ sources, searchType, rewrittenQueries, originalQ
                             <Badge
                               className={cn(
                                 "text-xs",
-                                percentage >= 80 && "bg-green-100 text-green-700 hover:bg-green-100",
-                                percentage >= 60 && percentage < 80 && "bg-blue-100 text-blue-700 hover:bg-blue-100",
-                                percentage < 60 && "bg-yellow-100 text-yellow-700 hover:bg-yellow-100"
+                                percentage >= 80 && "bg-accent/10 text-accent hover:bg-accent/10",
+                                percentage >= 60 && percentage < 80 && "bg-primary/10 text-primary hover:bg-primary/10",
+                                percentage < 60 && "bg-orange-400/10 text-orange-400 hover:bg-orange-400/10"
                               )}
                             >
                               {percentage}%
                             </Badge>
                             {isExpanded ? (
-                              <ChevronUp className="h-3 w-3 text-gray-400" />
+                              <ChevronUp className="h-3 w-3 text-muted" />
                             ) : (
-                              <ChevronDown className="h-3 w-3 text-gray-400" />
+                              <ChevronDown className="h-3 w-3 text-muted" />
                             )}
                           </div>
                         </Button>
 
                         {isExpanded && (
-                          <div className="border-t border-gray-100 px-3 py-3 bg-gray-50">
+                          <div className="border-t border-border px-3 py-3 bg-background">
                             <div className="flex items-center gap-2 mb-2">
-                              <Search className="h-3 w-3 text-gray-400" />
-                              <span className="text-xs text-gray-500">
+                              <Search className="h-3 w-3 text-muted" />
+                              <span className="text-xs text-muted">
                                 Relevance: {percentage}% ({relevanceLabel})
                               </span>
                               {source.metadata.ingested_at && (
-                                <span className="text-xs text-gray-400">
-                                  • Added: {new Date(source.metadata.ingested_at).toLocaleDateString()}
+                                <span className="text-xs text-muted">
+                                  {"\u2022"} Added: {new Date(source.metadata.ingested_at).toLocaleDateString()}
                                 </span>
                               )}
                             </div>
-                            <p className="text-sm text-gray-700 leading-relaxed whitespace-pre-wrap">
+                            <p className="text-sm text-text-main leading-relaxed whitespace-pre-wrap">
                               {source.text}
                             </p>
                           </div>

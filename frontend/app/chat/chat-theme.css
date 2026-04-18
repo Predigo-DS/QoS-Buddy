@@ -39,10 +39,10 @@
 .chat-theme textarea,
 .chat-theme input,
 .chat-theme select {
-  color: #0f172a;
+  color: hsl(var(--text-main));
 }
 
 .chat-theme input::placeholder,
 .chat-theme textarea::placeholder {
-  color: #475569;
+  color: hsl(var(--muted));
 }

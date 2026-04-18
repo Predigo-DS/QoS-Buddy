@@ -1,6 +1,6 @@
 "use client";
 
-import React from "react";
+import React, { useMemo } from "react";
 import { AlertTriangle, CheckCircle2, LoaderCircle, RefreshCw } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useBackendReadiness } from "@/hooks/useBackendReadiness";
@@ -8,8 +8,37 @@ import { useBackendReadiness } from "@/hooks/useBackendReadiness";
 function StatusLine(props: {
   label: string;
   ready: boolean;
+  downloading?: boolean;
+  downloadingProgress?: number;
   error?: string;
 }) {
+  const downloadLabel = props.downloading
+    ? "Downloading"
+    : undefined;
+
+  const downloadProgress = useMemo(() => {
+    if (!props.downloading) return null;
+    const p = props.downloadingProgress ?? 0;
+    const barWidth = Math.max(2, Math.min(100, p));
+    return (
+      <div className="mt-2 space-y-1">
+        <div className="flex items-center justify-between text-[11px]">
+          <span className="text-muted">Downloading bge-m3 model... (~1.3 GB)</span>
+          <span className="text-muted">{barWidth}%</span>
+        </div>
+        <div className="h-1.5 w-full overflow-hidden rounded-full bg-border">
+          <div
+            className="h-full rounded-full bg-primary transition-all duration-500"
+            style={{ width: `${barWidth}%` }}
+          />
+        </div>
+        <p className="text-[10px] text-muted">
+          First-time download may take several minutes
+        </p>
+      </div>
+    );
+  }, [props.downloading, props.downloadingProgress]);
+
   return (
     <div className="rounded-lg border border-border bg-surface px-3 py-2">
       <div className="flex items-center justify-between gap-4">
@@ -19,6 +48,11 @@ function StatusLine(props: {
             <CheckCircle2 className="size-3.5" />
             Ready
           </span>
+        ) : props.downloading ? (
+          <span className="inline-flex items-center gap-1 text-xs font-medium text-primary">
+            <LoaderCircle className="size-3.5 animate-spin" />
+            {downloadLabel}
+          </span>
         ) : (
           <span className="inline-flex items-center gap-1 text-xs font-medium text-primary">
             <LoaderCircle className="size-3.5 animate-spin" />
@@ -26,6 +60,7 @@ function StatusLine(props: {
           </span>
         )}
       </div>
+      {downloadProgress}
       {!!props.error && (
         <p className="mt-1 text-xs text-danger">{props.error}</p>
       )}
@@ -60,6 +95,8 @@ export function BackendReadinessGate({
             <StatusLine
               label="RAG retrieval service"
               ready={readiness.ragReady}
+              downloading={readiness.ragDownloading}
+              downloadingProgress={readiness.downloadProgress}
               error={readiness.ragError}
             />
           </div>

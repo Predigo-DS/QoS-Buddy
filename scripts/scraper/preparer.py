@@ -58,7 +58,7 @@ class PipelineConfig:
     MAX_CONCURRENT_LLM_CALLS: int = 5
     LLM_REQUEST_TIMEOUT: int = 60
     LLM_RETRY_ATTEMPTS: int = 3
-    MAX_TEXT_LENGTH: int = 4000  # Truncate text for LLM to avoid token limits
+    MAX_TEXT_LENGTH: int = 6000  # Truncate text for LLM to avoid token limits
     
     # Output Settings
     OUTPUT_FILE: str = "network_docs_prepared.json"

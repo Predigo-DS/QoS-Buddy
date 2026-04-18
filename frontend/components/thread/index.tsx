@@ -410,7 +410,7 @@ export function Thread() {
   const [isCreatingThread, setIsCreatingThread] = useState(false);
   const [searchType, setSearchType] = useState<"hybrid" | "semantic" | "keyword">("hybrid");
   const [rrfSparseWeight, setRrfSparseWeight] = useState(0.5);
-  const [minRelevance, setMinRelevance] = useState(0.7);
+  const [minRelevance, setMinRelevance] = useState(0.5);
   // Query rewriting always ON - removed toggle
   const isLargeScreen = useMediaQuery("(min-width: 1024px)");
 
@@ -880,7 +880,7 @@ footer={
                           }
                         }}
                         placeholder="Type your message..."
-                        className="min-h-24 w-full resize-none rounded-2xl border border-white/60 bg-[#d9e1ee] p-3.5 text-[15px] leading-relaxed text-[#0f172a] shadow-inner ring-0 outline-none placeholder:text-[#475569] focus:border-primary/60 focus:ring-1 focus:ring-primary/20"
+                        className="min-h-24 w-full resize-none rounded-2xl border border-border bg-background p-3.5 text-[15px] leading-relaxed text-text-main shadow-inner ring-0 outline-none placeholder:text-muted focus:border-primary/60 focus:ring-1 focus:ring-primary/20"
                       />
 
 <div className="flex flex-wrap items-center gap-3 border-t border-border/60 px-1 pt-3">

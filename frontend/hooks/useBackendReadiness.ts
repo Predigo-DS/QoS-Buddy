@@ -9,6 +9,7 @@ type ReadinessSnapshot = {
   agentReady: boolean;
   ragReady: boolean;
   ragWarmup: "idle" | "warming" | "ready" | "error";
+  ragDownloading: boolean;
   agentError?: string;
   ragError?: string;
   lastCheckedAt?: number;
@@ -16,6 +17,8 @@ type ReadinessSnapshot = {
 
 const DEFAULT_TIMEOUT_MS = 30_000;
 const DEFAULT_POLL_INTERVAL_MS = 2_000;
+
+const MODEL_DOWNLOAD_TIMEOUT_MS = 5 * 60 * 1000; // 5 minutes for model download
 
 function resolveMs(raw: string | undefined, fallback: number): number {
   const parsed = Number(raw);
@@ -47,11 +50,14 @@ export function useBackendReadiness() {
     agentReady: false,
     ragReady: false,
     ragWarmup: "idle",
+    ragDownloading: false,
   });
 
   const timerRef = useRef<number | null>(null);
   const runIdRef = useRef(0);
   const ragWarmupRef = useRef<"idle" | "warming" | "ready" | "error">("idle");
+  const ragDownloadingRef = useRef(false);
+  const downloadStartedAtRef = useRef<number | null>(null);
 
   const clearTimer = useCallback(() => {
     if (timerRef.current !== null) {
@@ -103,16 +109,23 @@ export function useBackendReadiness() {
             throw new Error(`RAG health check failed (${response.status}).`);
           }
 
-          const payload = (await response.json()) as { status?: string };
+          const payload = (await response.json()) as { status?: string; warmup?: { status?: string } };
           const ready = payload?.status === "ok";
+          const warmupStatus = payload?.warmup?.status;
+
+          // Detect model download phase: container is up but model still loading
+          const isDownloading = !ready && (warmupStatus === "warming" || payload?.status === "starting");
+
           return {
             ready,
             error: ready ? undefined : `RAG reported status: ${payload?.status ?? "unknown"}.`,
+            isDownloading,
           };
         } catch (error) {
           return {
             ready: false,
             error: error instanceof Error ? error.message : "RAG check failed.",
+            isDownloading: false,
           };
         }
       })(),
@@ -122,9 +135,19 @@ export function useBackendReadiness() {
       void triggerRagWarmup();
     }
 
+    // Track download state
+    if (ragResult.isDownloading && !ragDownloadingRef.current) {
+      ragDownloadingRef.current = true;
+      downloadStartedAtRef.current = Date.now();
+    } else if (!ragResult.isDownloading) {
+      ragDownloadingRef.current = false;
+      downloadStartedAtRef.current = null;
+    }
+
     return {
       agentReady: agentResult.ready,
       ragReady: ragResult.ready,
+      ragDownloading: ragDownloadingRef.current,
       agentError: agentResult.error,
       ragError: ragResult.error,
       ragWarmup: ragWarmupRef.current,
@@ -143,8 +166,11 @@ export function useBackendReadiness() {
       agentReady: false,
       ragReady: false,
       ragWarmup: "idle",
+      ragDownloading: false,
     });
     ragWarmupRef.current = "idle";
+    ragDownloadingRef.current = false;
+    downloadStartedAtRef.current = null;
 
     const loop = async () => {
       const result = await checkOnce();
@@ -162,8 +188,15 @@ export function useBackendReadiness() {
         return;
       }
 
-      const timedOut = now - startedAt >= timeoutMs;
-      if (timedOut) {
+      // Check model download timeout
+      const downloadTimedOut =
+        result.ragDownloading &&
+        downloadStartedAtRef.current !== null &&
+        now - downloadStartedAtRef.current >= MODEL_DOWNLOAD_TIMEOUT_MS;
+
+      const timedOut = !result.ragDownloading && now - startedAt >= timeoutMs;
+
+      if (downloadTimedOut || timedOut) {
         setSnapshot({
           phase: "degraded",
           ...result,
@@ -192,11 +225,20 @@ export function useBackendReadiness() {
     };
   }, [clearTimer, startChecks]);
 
+  // Calculate download progress percentage (0-100) based on elapsed time
+  const downloadProgress = useMemo(() => {
+    if (!snapshot.ragDownloading || !downloadStartedAtRef.current) return 0;
+    const elapsed = Date.now() - downloadStartedAtRef.current;
+    const progress = Math.min(95, (elapsed / MODEL_DOWNLOAD_TIMEOUT_MS) * 100);
+    return Math.round(progress);
+  }, [snapshot.ragDownloading]);
+
   return {
     ...snapshot,
     isChecking: snapshot.phase === "checking",
     isReady: snapshot.phase === "ready",
     isDegraded: snapshot.phase === "degraded",
     retry: startChecks,
+    downloadProgress,
   };
 }

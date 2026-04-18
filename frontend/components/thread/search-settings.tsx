@@ -88,8 +88,8 @@ export function SearchSettings({
           id="relevance-threshold"
           value={[minRelevance]}
           onValueChange={(values) => onMinRelevanceChange(values[0])}
-          min={0.5}
-          max={0.9}
+          min={0.3}
+          max={0.8}
           step={0.05}
           className="flex-1"
         />

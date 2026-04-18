@@ -435,7 +435,7 @@ export default function DocumentsPage(): React.ReactNode {
         </div>
 
         {usingFallbackRagUrl && (
-          <div className="rounded-lg border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-800">
+          <div className="rounded-lg border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-sm text-amber-400">
             NEXT_PUBLIC_RAG_API_URL is invalid (<strong>{configuredRagApiUrl}</strong>). Using fallback <strong>{DEFAULT_RAG_API_URL}</strong>.
           </div>
         )}

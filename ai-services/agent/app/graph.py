@@ -46,10 +46,10 @@ Now rewrite this query:
 # ── Custom LangChain Retriever wrapping the RAG microservice ──────────────────
 class QoSRetriever(BaseRetriever):
     rag_url: str = RAG_URL
-    top_k: int = 5
+    top_k: int = 10
     search_type: str = "hybrid"
     rrf_dense_weight: float = 0.7
-    min_score: float = 0.7
+    min_score: float = 0.5
 
     def _get_relevant_documents(
         self, query: str, *, run_manager: CallbackManagerForRetrieverRun
@@ -182,7 +182,7 @@ async def retrieve_node(state: AgentState, config: RunnableConfig) -> AgentState
 
     retriever = QoSRetriever(
         rag_url=RAG_URL,
-        top_k=5,
+        top_k=10,
         search_type=search_type,
         rrf_dense_weight=rrf_dense_weight,
         min_score=min_relevance,

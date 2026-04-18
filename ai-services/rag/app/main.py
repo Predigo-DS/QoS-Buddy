@@ -38,7 +38,8 @@ async def _run_warmup():
         warmup_state["last_error"] = None
 
         try:
-            await asyncio.to_thread(models["embedder"].encode, ["qosentry warmup"])
+            warmup_vec = models["embedder"].encode(["qosentry warmup"])
+            _ = warmup_vec["dense_vecs"]
             await asyncio.to_thread(models["vs"].total_chunks)
             warmup_state["status"] = "ready"
         except Exception as e:
@@ -50,7 +51,7 @@ async def _run_warmup():
 async def lifespan(app: FastAPI):
     print("Loading AI models and connecting to DB...")
     models["embedder"] = get_embedder()
-    models["vs"] = VectorStoreClient()
+    models["vs"] = VectorStoreClient(embedder=models["embedder"])
     warmup_state["status"] = "idle"
     warmup_state["last_error"] = None
     asyncio.create_task(_run_warmup())
@@ -84,7 +85,7 @@ class RetrieveRequest(BaseModel):
     data_category: Optional[str] = None
     access_levels: Optional[list[str]] = None
     rrf_dense_weight: Optional[float] = 0.7  # For hybrid: 0.0-1.0 (dense weight)
-    min_relevance_score: Optional[float] = 0.7  # Minimum threshold (0.0-1.0)
+    min_relevance_score: Optional[float] = 0.5  # Minimum threshold (0.0-1.0)
 
 
 def _require_ready():
@@ -152,12 +153,14 @@ async def retrieve(req: RetrieveRequest):
                 min_score=req.min_relevance_score,
             )
         elif req.search_type == "semantic":
-            vec = models["embedder"].encode([req.query]).tolist()[0]
+            semantic_result = models["embedder"].encode([req.query], return_dense=True, return_sparse=False, return_colbert_vecs=False)
+            vec = semantic_result["dense_vecs"].tolist()[0]
             chunks = models["vs"].search(vec, top_k=req.top_k)
         elif req.search_type == "keyword":
             # Keyword-only search using sparse vectors
             chunks = models["vs"].keyword_search(
                 query=req.query,
+                embedder=models["embedder"],
                 top_k=req.top_k,
                 tenant_id=req.tenant_id,
                 data_category=req.data_category,

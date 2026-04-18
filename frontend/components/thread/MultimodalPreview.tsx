@@ -40,7 +40,7 @@ export const MultimodalPreview: React.FC<MultimodalPreviewProps> = ({
         {removable && (
           <button
             type="button"
-            className="absolute top-1 right-1 z-10 rounded-full bg-gray-500 text-white hover:bg-gray-700"
+            className="absolute top-1 right-1 z-10 rounded-full bg-border text-text-main hover:bg-surface"
             onClick={onRemove}
             aria-label="Remove image"
           >
@@ -58,7 +58,7 @@ export const MultimodalPreview: React.FC<MultimodalPreviewProps> = ({
     return (
       <div
         className={cn(
-          "relative flex items-start gap-2 rounded-md border bg-gray-100 px-3 py-2",
+          "relative flex items-start gap-2 rounded-md border bg-background px-3 py-2",
           className,
         )}
       >
@@ -71,7 +71,7 @@ export const MultimodalPreview: React.FC<MultimodalPreviewProps> = ({
           />
         </div>
         <span
-          className={cn("min-w-0 flex-1 text-sm break-all text-gray-800")}
+          className={cn("min-w-0 flex-1 text-sm break-all text-text-main")}
           style={{ wordBreak: "break-all", whiteSpace: "pre-wrap" }}
         >
           {String(filename)}
@@ -79,7 +79,7 @@ export const MultimodalPreview: React.FC<MultimodalPreviewProps> = ({
         {removable && (
           <button
             type="button"
-            className="ml-2 self-start rounded-full bg-gray-200 p-1 text-teal-700 hover:bg-gray-300"
+            className="ml-2 self-start rounded-full bg-border p-1 text-accent hover:bg-surface"
             onClick={onRemove}
             aria-label="Remove PDF"
           >
@@ -94,7 +94,7 @@ export const MultimodalPreview: React.FC<MultimodalPreviewProps> = ({
   return (
     <div
       className={cn(
-        "flex items-center gap-2 rounded-md border bg-gray-100 px-3 py-2 text-gray-500",
+        "flex items-center gap-2 rounded-md border bg-background px-3 py-2 text-muted",
         className,
       )}
     >
@@ -103,7 +103,7 @@ export const MultimodalPreview: React.FC<MultimodalPreviewProps> = ({
       {removable && (
         <button
           type="button"
-          className="ml-2 rounded-full bg-gray-200 p-1 text-gray-500 hover:bg-gray-300"
+          className="ml-2 rounded-full bg-border p-1 text-muted hover:bg-surface"
           onClick={onRemove}
           aria-label="Remove file"
         >
