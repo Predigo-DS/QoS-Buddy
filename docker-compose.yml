@@ -1,6 +1,29 @@
 services:
 
   # ─────────────────────────────────────────
+  # POSTGRES (LangGraph checkpoints)
+  # ─────────────────────────────────────────
+  postgres:
+    image: postgres:16
+    container_name: qos-postgres
+    environment:
+      - POSTGRES_DB=qosbuddy
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=postgres
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    networks:
+      - qos-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d qosbuddy"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ─────────────────────────────────────────
   # VECTOR STORE
   # ─────────────────────────────────────────
   qdrant:
@@ -21,7 +44,7 @@ services:
       interval: 10s
       timeout: 5s
       retries: 5
-      start_period : 300s
+      start_period : 90s
 
   # ─────────────────────────────────────────
   # RAG SERVICE  (ingestion + retrieval)
@@ -38,7 +61,12 @@ services:
     environment:
       - QDRANT_HOST=qdrant
       - QDRANT_PORT=6333
-      - EMBEDDING_MODEL=${EMBEDDING_MODEL:-sentence-transformers/all-MiniLM-L6-v2}
+      - EMBEDDING_MODEL=${EMBEDDING_MODEL:-BAAI/bge-m3}
+      - HF_HUB_DISABLE_XET=1
+      - HF_XET_HIGH_PERFORMANCE=0
+      - HF_HUB_ENABLE_HF_TRANSFER=0
+      - HF_HUB_DOWNLOAD_TIMEOUT=60
+      - HF_HUB_ETAG_TIMEOUT=900
     volumes:
       - ./ai-services/rag/app:/app
       - ./data:/data:ro
@@ -51,8 +79,9 @@ services:
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8001/health"]
       interval: 15s
-      timeout: 5s
-      retries: 3
+      timeout: 10s
+      retries: 5
+      start_period : 30s
 
   # ─────────────────────────────────────────
   # AGENT SERVICE  (LangGraph orchestration)
@@ -68,13 +97,13 @@ services:
       - ./ai-services/agent/.env
     environment:
       - RAG_SERVICE_URL=http://rag:8001
-      - LLM_MODEL=${LLM_MODEL:-llama3-8b-8192}
-      - GROQ_API_KEY=${GROQ_API_KEY}
+      - CHECKPOINT_DB_URI=postgresql://postgres:postgres@postgres:5432/qosbuddy
     volumes:
       - ./ai-services/agent/app:/app
+      - ./config:/app/config:ro
     depends_on:
-      rag:
-        condition: service_healthy
+      - postgres
+      - rag
     networks:
       - qos-network
     restart: unless-stopped
@@ -83,6 +112,84 @@ services:
       interval: 15s
       timeout: 5s
       retries: 3
+
+  anomaly_detection:
+    build:
+      context: ./ai-services/anomaly_detection
+      dockerfile: Dockerfile
+    container_name: qos-anomaly-detection
+    ports:
+      - "8003:8003"
+    environment:
+      - MODEL_DEVICE=cpu
+    networks:
+      - qos-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8003/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+
+  sla_forecasting:
+    build:
+      context: ./ai-services/SLA_forecasting
+      dockerfile: Dockerfile
+    container_name: qos-sla-forecasting
+    ports:
+      - "8004:8004"
+    environment:
+      - MODEL_DEVICE=cpu
+    networks:
+      - qos-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8004/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+
+  redis:
+    image: redis:7
+    container_name: qosentry-redis
+    ports:
+      - "6380:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: qosentry-backend
+    ports:
+      - "8081:8080"
+    environment:
+      SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/qosbuddy
+      SPRING_DATASOURCE_USERNAME: postgres
+      SPRING_DATASOURCE_PASSWORD: postgres
+      SPRING_DATA_REDIS_HOST: redis
+      SPRING_DATA_REDIS_PORT: 6379
+      APP_JWT_SECRET: qosentry_jwt_secret_dev_2026_secure
+      APP_JWT_EXPIRATION_MS: 86400000
+      AI_ANOMALY_BASE_URL: http://anomaly_detection:8003
+      AI_SLA_BASE_URL: http://sla_forecasting:8004
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      anomaly_detection:
+        condition: service_healthy
+      sla_forecasting:
+        condition: service_healthy
+    networks:
+      - qos-network
 
 # ─────────────────────────────────────────
 # SHARED NETWORK & VOLUMES
@@ -93,3 +200,4 @@ networks:
 
 volumes:
   qdrant_data:
+  postgres_data:
