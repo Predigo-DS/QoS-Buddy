@@ -1,3 +1,5 @@
+version: "3.9"
+
 services:
 
   # ─────────────────────────────────────────
@@ -57,7 +59,7 @@ services:
     ports:
       - "8001:8001"
     env_file:
-      - ./ai-services/rag/.env
+      - ./ai-services/rag/.env.example
     environment:
       - QDRANT_HOST=qdrant
       - QDRANT_PORT=6333
@@ -94,7 +96,7 @@ services:
     ports:
       - "8002:8002"
     env_file:
-      - ./ai-services/agent/.env
+      - ./ai-services/agent/.env.example
     environment:
       - RAG_SERVICE_URL=http://rag:8001
       - CHECKPOINT_DB_URI=postgresql://postgres:postgres@postgres:5432/qosbuddy
