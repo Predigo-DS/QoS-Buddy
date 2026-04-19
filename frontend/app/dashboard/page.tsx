@@ -114,7 +114,7 @@ export default function DashboardPage() {
           </div>
 
           {/* Inference actions */}
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-12">
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-12">
             <motion.div
               initial={{ opacity: 0, y: 30 }}
               animate={{ opacity: 1, y: 0 }}
@@ -150,6 +150,25 @@ export default function DashboardPage() {
                 className="inline-flex items-center justify-center rounded-xl px-4 py-2 text-sm font-semibold bg-secondary/20 text-secondary border border-secondary/40 hover:bg-secondary/30 transition-colors"
               >
                 Open SLA Inference
+              </Link>
+            </motion.div>
+
+            <motion.div
+              initial={{ opacity: 0, y: 30 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ delay: 0.4, duration: 0.5 }}
+              className="glass rounded-2xl p-6 border border-border hover:border-danger/40 transition-colors"
+            >
+              <p className="text-xs uppercase tracking-wide text-danger font-semibold mb-2">Inference</p>
+              <h3 className="text-xl font-bold text-text-main mb-2">Incident Response</h3>
+              <p className="text-sm text-muted mb-5">
+                Trigger the new incident-response graph, inspect placeholder tools, and validate orchestration decisions.
+              </p>
+              <Link
+                href="/inference/incident"
+                className="inline-flex items-center justify-center rounded-xl px-4 py-2 text-sm font-semibold bg-danger/20 text-danger border border-danger/40 hover:bg-danger/30 transition-colors"
+              >
+                Open Incident Inference
               </Link>
             </motion.div>
           </div>

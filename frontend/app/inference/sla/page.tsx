@@ -186,6 +186,12 @@ export default function SlaInferencePage() {
             >
               Anomaly Page
             </Link>
+            <Link
+              href="/inference/incident"
+              className="text-xs sm:text-sm px-3 py-2 rounded-lg border border-danger/40 text-danger hover:bg-danger/10 transition-colors"
+            >
+              Incident Page
+            </Link>
             <button
               onClick={() => router.push('/dashboard')}
               className="text-xs sm:text-sm px-3 py-2 rounded-lg border border-border text-muted hover:text-text-main hover:bg-surface transition-colors inline-flex items-center gap-1.5"
