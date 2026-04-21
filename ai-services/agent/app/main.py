@@ -14,6 +14,7 @@ from psycopg.rows import dict_row
 from pydantic import BaseModel, Field
 from graph import build_graph
 from incident_graph import build_incident_graph, available_placeholder_tools
+from optimization_graph import build_optimization_graph
 from dotenv import load_dotenv
 from config import PROVIDERS, DEFAULT_PROVIDER, LLM_MODEL, FULL_CONFIG
 
@@ -87,6 +88,22 @@ class IncidentResponse(BaseModel):
     validation: dict = Field(default_factory=dict)
     decision: str
     expected_recovery_seconds: int | None = None
+
+
+class OptimizationRequest(BaseModel):
+    anomaly_result: dict | None = None
+    sla_result: dict | None = None
+    avg_30s: dict[str, float] = Field(default_factory=dict)
+    device: str | None = None
+    context: str | None = None
+
+
+class OptimizationResponse(BaseModel):
+    decision: dict = Field(default_factory=dict)
+    recommended_actions: list[str] = Field(default_factory=list)
+    tool_trace: list[dict] = Field(default_factory=list)
+    confidence: float = 0.5
+    risk_level: str = "medium"
 
 
 async def _run_setup_maybe_async(checkpointer):
@@ -390,6 +407,7 @@ async def lifespan(app: FastAPI):
     app.state.persistence_enabled = False
     app.state.graph = build_graph()
     app.state.incident_graph = build_incident_graph()
+    app.state.optimization_graph = None  # built lazily with provider config
     app.state.models_cache_data = None
     app.state.models_cache_updated_at = 0.0
     app.state.models_cache_lock = asyncio.Lock()
@@ -649,6 +667,46 @@ async def chat(req: ChatRequest):
             sources=result.get("sources", []),
             search_type=search_type,
             rewritten_queries=rewritten_queries,
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/optimization/respond", response_model=OptimizationResponse)
+async def optimization_respond(req: OptimizationRequest):
+    try:
+        _, resolved_base_url, resolved_api_key = _resolve_provider(None, None)
+
+        if app.state.optimization_graph is None:
+            app.state.optimization_graph = build_optimization_graph(
+                base_url=resolved_base_url,
+                api_key=resolved_api_key,
+                model=LLM_MODEL,
+            )
+
+        opt_graph = app.state.optimization_graph
+        result = await opt_graph.ainvoke({
+            "anomaly_result": req.anomaly_result or {},
+            "sla_result": req.sla_result or {},
+            "avg_30s": req.avg_30s,
+            "device": req.device or "unknown",
+            "context": req.context or "",
+            "messages": [],
+            "tool_trace": [],
+            "decision_output": {},
+        })
+
+        decision = result.get("decision_output") or {}
+        tool_trace = result.get("tool_trace") or []
+
+        return OptimizationResponse(
+            decision=decision,
+            recommended_actions=decision.get("recommended_actions", []),
+            tool_trace=tool_trace,
+            confidence=float(decision.get("confidence", 0.5)),
+            risk_level=str(decision.get("risk_level", "medium")),
         )
     except HTTPException:
         raise

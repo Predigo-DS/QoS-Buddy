@@ -2,6 +2,7 @@ package com.project.backend.controllers;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.project.backend.dtos.AnomalyInferenceRequestDto;
+import com.project.backend.dtos.OptimizationResponseDto;
 import com.project.backend.dtos.SlaInferenceRequestDto;
 import com.project.backend.services.interfaces.AiInferenceService;
 import jakarta.validation.Valid;
@@ -38,5 +39,10 @@ public class AiInferenceController {
     @PostMapping("/sla/predict")
     public ResponseEntity<JsonNode> predictSla(@Valid @RequestBody SlaInferenceRequestDto request) {
         return ResponseEntity.ok(aiInferenceService.predictSla(request));
+    }
+
+    @PostMapping("/optimize/mock")
+    public ResponseEntity<OptimizationResponseDto> optimizeMock() {
+        return ResponseEntity.ok(aiInferenceService.runMockOptimization());
     }
 }

@@ -18,6 +18,12 @@ warmup_state = {
 }
 warmup_lock = asyncio.Lock()
 
+init_state = {
+    "status": "idle",  # idle | loading | ready | error
+    "last_error": None,
+}
+init_lock = asyncio.Lock()
+
 
 def _warmup_response():
     return {
@@ -47,39 +53,70 @@ async def _run_warmup():
             warmup_state["last_error"] = str(e)
 
 
+async def _init_models():
+    async with init_lock:
+        if init_state["status"] in ("loading", "ready"):
+            return
+
+        init_state["status"] = "loading"
+        init_state["last_error"] = None
+
+        try:
+            embedder = await asyncio.to_thread(get_embedder)
+            models["embedder"] = embedder
+        except Exception as e:
+            init_state["status"] = "error"
+            init_state["last_error"] = f"Embedder init failed: {e}"
+            return
+
+        max_retries = int(os.getenv("QDRANT_INIT_MAX_RETRIES", "30"))
+        retry_delay = float(os.getenv("QDRANT_INIT_RETRY_DELAY_SEC", "2"))
+        last_error: Exception | None = None
+        for attempt in range(1, max_retries + 1):
+            try:
+                models["vs"] = VectorStoreClient(embedder=models["embedder"])
+                last_error = None
+                break
+            except Exception as e:
+                last_error = e
+                if attempt == max_retries:
+                    break
+                print(
+                    f"Qdrant not ready yet (attempt {attempt}/{max_retries}): {e}. "
+                    f"Retrying in {retry_delay}s..."
+                )
+                await asyncio.sleep(retry_delay)
+
+        if last_error is not None:
+            init_state["status"] = "error"
+            init_state["last_error"] = f"Vector store init failed: {last_error}"
+            return
+
+        init_state["status"] = "ready"
+        init_state["last_error"] = None
+
+        warmup_state["status"] = "idle"
+        warmup_state["last_error"] = None
+        asyncio.create_task(_run_warmup())
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     print("Loading AI models and connecting to DB...")
-    max_retries = int(os.getenv("QDRANT_INIT_MAX_RETRIES", "30"))
-    retry_delay = float(os.getenv("QDRANT_INIT_RETRY_DELAY_SEC", "2"))
-    models["embedder"] = get_embedder()
-    last_error: Exception | None = None
-    for attempt in range(1, max_retries + 1):
-        try:
-            models["vs"] = VectorStoreClient(embedder=models["embedder"])
-            last_error = None
-            break
-        except Exception as e:
-            last_error = e
-            if attempt == max_retries:
-                raise
-            print(
-                f"Qdrant not ready yet (attempt {attempt}/{max_retries}): {e}. "
-                f"Retrying in {retry_delay}s..."
-            )
-            await asyncio.sleep(retry_delay)
-
-    if last_error is not None:
-        raise last_error
-
+    models.clear()
     warmup_state["status"] = "idle"
     warmup_state["last_error"] = None
-    asyncio.create_task(_run_warmup())
-    print("System Ready.")
+    init_state["status"] = "idle"
+    init_state["last_error"] = None
+
+    asyncio.create_task(_init_models())
+    print("System starting (background init).")
     yield
     models.clear()
     warmup_state["status"] = "idle"
     warmup_state["last_error"] = None
+    init_state["status"] = "idle"
+    init_state["last_error"] = None
 
 
 app = FastAPI(title="QoS-Buddy RAG Service", version="1.0.0", lifespan=lifespan)
@@ -109,19 +146,41 @@ class RetrieveRequest(BaseModel):
 
 
 def _require_ready():
+    if init_state["status"] == "error":
+        raise HTTPException(
+            status_code=503,
+            detail=init_state["last_error"] or "RAG service failed to initialize",
+        )
     if "embedder" not in models or "vs" not in models:
         raise HTTPException(status_code=503, detail="Models still loading")
 
 
 @app.get("/health")
 async def health():
-    if "embedder" not in models:
-        return {"status": "starting", "service": "rag", "warmup": _warmup_response()}
-    return {"status": "ok", "service": "rag", "warmup": _warmup_response()}
+    payload = {
+        "service": "rag",
+        "status": "starting",
+        "init": {
+            "status": init_state["status"],
+            "last_error": init_state["last_error"],
+        },
+        "warmup": _warmup_response(),
+    }
+
+    if init_state["status"] == "error":
+        payload["status"] = "degraded"
+        return payload
+
+    if "embedder" in models and "vs" in models:
+        payload["status"] = "ok"
+    return payload
 
 
 @app.post("/warmup")
 async def warmup():
+    if init_state["status"] != "ready":
+        asyncio.create_task(_init_models())
+
     _require_ready()
 
     if warmup_state["status"] != "warming" and warmup_state["status"] != "ready":
