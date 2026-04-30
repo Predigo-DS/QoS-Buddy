@@ -10,6 +10,7 @@ type ReadinessSnapshot = {
   ragReady: boolean;
   ragWarmup: "idle" | "warming" | "ready" | "error";
   ragDownloading: boolean;
+  ragDownloadProgress?: number;
   agentError?: string;
   ragError?: string;
   lastCheckedAt?: number;
@@ -51,6 +52,7 @@ export function useBackendReadiness() {
     ragReady: false,
     ragWarmup: "idle",
     ragDownloading: false,
+    ragDownloadProgress: 0,
   });
 
   const timerRef = useRef<number | null>(null);
@@ -109,9 +111,10 @@ export function useBackendReadiness() {
             throw new Error(`RAG health check failed (${response.status}).`);
           }
 
-          const payload = (await response.json()) as { status?: string; warmup?: { status?: string } };
+          const payload = (await response.json()) as { status?: string; warmup?: { status?: string }; init?: { progress?: number } };
           const ready = payload?.status === "ok";
           const warmupStatus = payload?.warmup?.status;
+          const downloadProgress = payload?.init?.progress ?? 0;
 
           // Detect model download phase: container is up but model still loading
           const isDownloading = !ready && (warmupStatus === "warming" || payload?.status === "starting");
@@ -120,12 +123,14 @@ export function useBackendReadiness() {
             ready,
             error: ready ? undefined : `RAG reported status: ${payload?.status ?? "unknown"}.`,
             isDownloading,
+            downloadProgress,
           };
         } catch (error) {
           return {
             ready: false,
             error: error instanceof Error ? error.message : "RAG check failed.",
             isDownloading: false,
+            downloadProgress: 0,
           };
         }
       })(),
@@ -148,6 +153,7 @@ export function useBackendReadiness() {
       agentReady: agentResult.ready,
       ragReady: ragResult.ready,
       ragDownloading: ragDownloadingRef.current,
+      ragDownloadProgress: ragResult.downloadProgress ?? 0,
       agentError: agentResult.error,
       ragError: ragResult.error,
       ragWarmup: ragWarmupRef.current,
@@ -167,6 +173,7 @@ export function useBackendReadiness() {
       ragReady: false,
       ragWarmup: "idle",
       ragDownloading: false,
+      ragDownloadProgress: 0,
     });
     ragWarmupRef.current = "idle";
     ragDownloadingRef.current = false;
@@ -225,13 +232,8 @@ export function useBackendReadiness() {
     };
   }, [clearTimer, startChecks]);
 
-  // Calculate download progress percentage (0-100) based on elapsed time
-  const downloadProgress = useMemo(() => {
-    if (!snapshot.ragDownloading || !downloadStartedAtRef.current) return 0;
-    const elapsed = Date.now() - downloadStartedAtRef.current;
-    const progress = Math.min(95, (elapsed / MODEL_DOWNLOAD_TIMEOUT_MS) * 100);
-    return Math.round(progress);
-  }, [snapshot.ragDownloading]);
+  // Return the actual download progress percentage reported by the API
+  const downloadProgress = snapshot.ragDownloadProgress ?? 0;
 
   return {
     ...snapshot,

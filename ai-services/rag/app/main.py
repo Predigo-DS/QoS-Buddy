@@ -4,7 +4,7 @@ from typing import Optional
 from fastapi import FastAPI, HTTPException, UploadFile, File
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
-from embeddings import get_embedder
+from embeddings import get_embedder, download_progress
 from vector_store import VectorStoreClient
 from contextlib import asynccontextmanager
 from dotenv import load_dotenv
@@ -157,12 +157,15 @@ def _require_ready():
 
 @app.get("/health")
 async def health():
+    progress = 100.0 if init_state["status"] == "ready" else download_progress["percentage"]
+
     payload = {
         "service": "rag",
         "status": "starting",
         "init": {
             "status": init_state["status"],
             "last_error": init_state["last_error"],
+            "progress": progress
         },
         "warmup": _warmup_response(),
     }
@@ -171,7 +174,7 @@ async def health():
         payload["status"] = "degraded"
         return payload
 
-    if "embedder" in models and "vs" in models:
+    if "embedder" in models and "vs" in models and init_state["status"] == "ready":
         payload["status"] = "ok"
     return payload
 
