@@ -45,7 +45,7 @@ async def _run_warmup():
 
         try:
             warmup_vec = models["embedder"].encode(["qosentry warmup"])
-            _ = warmup_vec["dense_vecs"]
+            _ = warmup_vec.tolist()
             await asyncio.to_thread(models["vs"].total_chunks)
             warmup_state["status"] = "ready"
         except Exception as e:
