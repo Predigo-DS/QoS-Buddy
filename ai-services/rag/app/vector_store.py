@@ -90,6 +90,52 @@ class VectorStoreClient:
         self.embedder = embedder
         self._ensure_collection()
 
+    def _create_collection(self):
+        self.client.create_collection(
+            collection_name=COLLECTION,
+            vectors_config={
+                "dense": VectorParams(size=VECTOR_SIZE, distance=Distance.COSINE),
+            },
+            sparse_vectors_config={
+                "sparse": SparseVectorParams(modifier=Modifier.IDF)
+            },
+        )
+        self._create_payload_indexes()
+
+    def _collection_matches_expected_schema(self) -> bool:
+        try:
+            collection_info = self.client.get_collection(collection_name=COLLECTION)
+        except Exception:
+            return False
+
+        params = getattr(getattr(collection_info, "config", None), "params", None)
+        vectors = getattr(params, "vectors", None)
+        sparse_vectors = getattr(params, "sparse_vectors", None)
+
+        dense_config = None
+        if isinstance(vectors, dict):
+            dense_config = vectors.get("dense")
+        elif vectors is not None:
+            dense_config = vectors
+
+        sparse_config = None
+        if isinstance(sparse_vectors, dict):
+            sparse_config = sparse_vectors.get("sparse")
+        elif sparse_vectors is not None:
+            sparse_config = sparse_vectors
+
+        if dense_config is None or sparse_config is None:
+            return False
+
+        dense_distance = getattr(dense_config, "distance", None)
+        sparse_modifier = getattr(sparse_config, "modifier", None)
+
+        return (
+            getattr(dense_config, "size", None) == VECTOR_SIZE
+            and str(dense_distance).lower() == str(Distance.COSINE).lower()
+            and str(sparse_modifier).lower() == str(Modifier.IDF).lower()
+        )
+
     def _create_payload_indexes(self):
         try:
             self.client.create_payload_index(
@@ -148,16 +194,16 @@ class VectorStoreClient:
     def _ensure_collection(self):
         names = [c.name for c in self.client.get_collections().collections]
         if COLLECTION not in names:
-            self.client.create_collection(
-                collection_name=COLLECTION,
-                vectors_config={
-                    "dense": VectorParams(size=VECTOR_SIZE, distance=Distance.COSINE),
-                },
-                sparse_vectors_config={
-                    "sparse": SparseVectorParams(modifier=Modifier.IDF)
-                },
-            )
-            self._create_payload_indexes()
+            self._create_collection()
+            return
+
+        if not self._collection_matches_expected_schema():
+            print(f"Warning: recreating Qdrant collection {COLLECTION} because the schema is incompatible.")
+            self.client.delete_collection(collection_name=COLLECTION)
+            self._create_collection()
+            return
+
+        self._create_payload_indexes()
 
     def _split_into_segments(self, text: str) -> list[tuple[str, str]]:
         """Split text into prose and code block segments.

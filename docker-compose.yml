@@ -58,6 +58,10 @@ services:
     env_file:
       - ./ai-services/rag/.env.example
     environment:
+      - PYTHONUNBUFFERED=1
+      - HF_HUB_ENABLE_HF_TRANSFER=0
+      - HF_HUB_ENABLE_PROGRESS_BARS=1
+      - PYTHONIOENCODING=utf-8
       - QDRANT_HOST=qdrant
       - QDRANT_PORT=6333
       - EMBEDDING_MODEL=${EMBEDDING_MODEL:-Qwen/Qwen3-Embedding-0.6B}
