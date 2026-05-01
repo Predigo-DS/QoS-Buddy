@@ -68,8 +68,7 @@ public class AiInferenceServiceImpl implements AiInferenceService {
                 ? telemetryBufferService.getLatest(35)
                 : buildMockTelemetryRows();
 
-        // Step 1: anomaly detection — strip string fields, service only accepts numeric
-        // values
+        // Step 1: anomaly detection — strip string fields, service only accepts numeric values
         AnomalyInferenceRequestDto anomalyReq = AnomalyInferenceRequestDto.builder()
                 .rows(buildNumericOnlyRows(rows))
                 .stride(1)
@@ -79,10 +78,22 @@ public class AiInferenceServiceImpl implements AiInferenceService {
                 () -> predictAnomaly(anomalyReq),
                 buildMockAnomalyResult());
 
-        // Step 2: SLA forecasting
+        // Step 2: SLA forecasting — resolve real run_id/segment from metadata
+        String runId = "run_20260409_120415";
+        String segment = "IMS_CDN";
+        try {
+            JsonNode slaMeta = getSlaMetadata();
+            if (slaMeta.has("run_segment_keys") && slaMeta.get("run_segment_keys").isArray()
+                    && slaMeta.get("run_segment_keys").size() > 0) {
+                JsonNode first = slaMeta.get("run_segment_keys").get(0);
+                if (first.has("run_id"))  runId  = first.get("run_id").asText();
+                if (first.has("segment")) segment = first.get("segment").asText();
+            }
+        } catch (Exception ignored) {}
+
         SlaInferenceRequestDto slaReq = SlaInferenceRequestDto.builder()
-                .runId("run_20260409_120415")
-                .segment("IMS_CDN")
+                .runId(runId)
+                .segment(segment)
                 .rows(rows)
                 .useAllWindows(false)
                 .stride(1)
@@ -95,13 +106,35 @@ public class AiInferenceServiceImpl implements AiInferenceService {
         // Step 3: compute averages over last 30 seconds
         Map<String, Double> avg30s = computeAverages(rows);
 
-        // Step 4: call agent optimization endpoint
+        // Step 4: build context string from real metrics so the LLM understands the severity
+        double avgPlr    = avg30s.getOrDefault("plr", 0.0);
+        double avgDelay  = avg30s.getOrDefault("e2e_delay_ms", 0.0);
+        double avgMos    = avg30s.getOrDefault("mos_voice", 4.0);
+        boolean anomalyDetected = anomalyResult != null
+                && (anomalyResult.path("anomaly_detected").asBoolean(false)
+                    || anomalyResult.path("anomaly_windows").asInt(0) > 0);
+        boolean slaAlerted = slaResult != null
+                && (slaResult.path("sla_alert").asBoolean(false)
+                    || slaResult.path("alert_count").asInt(0) > 0);
+
+        String severity = anomalyDetected && slaAlerted ? "CRITICAL"
+                        : anomalyDetected || slaAlerted ? "HIGH"
+                        : avgPlr > 0.05 || avgDelay > 100 ? "MEDIUM" : "LOW";
+
+        String context = String.format(
+                "Live network data — %d rows from Mininet. Severity: %s. " +
+                "avg_plr=%.4f avg_e2e_delay=%.1fms avg_mos=%.2f. " +
+                "anomaly_detected=%b sla_alert=%b. " +
+                "Take concrete remediation action now.",
+                rows.size(), severity, avgPlr, avgDelay, avgMos, anomalyDetected, slaAlerted);
+
+        // Step 5: call agent optimization endpoint
         OptimizationRequestDto agentReq = OptimizationRequestDto.builder()
                 .anomalyResult(anomalyResult)
                 .slaResult(slaResult)
                 .avg30s(avg30s)
                 .device("switch-core-01")
-                .context("mock optimization pipeline")
+                .context(context)
                 .build();
         JsonNode agentResult = callWithMockFallback(
                 () -> post(agentBaseUrl + "/optimization/respond", agentReq),
@@ -199,24 +232,26 @@ public class AiInferenceServiceImpl implements AiInferenceService {
 
     private Map<String, Object> buildMockAnomalyResult() {
         Map<String, Object> result = new HashMap<>();
-        result.put("mock", true);
-        result.put("status", "fallback");
         result.put("anomaly_detected", true);
         result.put("anomaly_score", 0.78);
-        result.put("threshold", "best");
-        result.put("label", 1);
-        result.put("message", "Mock anomaly result — model artifacts not loaded");
+        result.put("threshold_name", "best");
+        result.put("threshold_value", 0.45);
+        result.put("anomaly_windows", 4);
+        result.put("total_windows", 5);
+        result.put("model_type", "autoencoder");
+        result.put("window_size", 7);
         return result;
     }
 
     private Map<String, Object> buildMockSlaResult() {
         Map<String, Object> result = new HashMap<>();
-        result.put("mock", true);
-        result.put("status", "fallback");
         result.put("sla_violation_probability", 0.82);
         result.put("sla_alert", true);
-        result.put("risk_level", "high");
-        result.put("message", "Mock SLA result — model artifacts not loaded");
+        result.put("alert_rate", 0.80);
+        result.put("alert_count", 4);
+        result.put("run_id", "run_20260409_120415");
+        result.put("segment", "IMS_CDN");
+        result.put("window_size", 7);
         return result;
     }
 

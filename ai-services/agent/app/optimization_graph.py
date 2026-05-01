@@ -110,26 +110,29 @@ BOUND_TOOLS = [
     decision_summary_tool,
 ]
 
-OPTIMIZATION_SYSTEM_PROMPT = """You are a network optimization agent.
-Prioritize safety and SLA stability.
-Use anomaly, SLA, and avg_30s jointly to make decisions.
-Use tools for actionable remediations.
-If confidence is low, return a monitor-only action.
-Never fabricate tool execution results and rely only on tool outputs.
+OPTIMIZATION_SYSTEM_PROMPT = """You are a network optimization agent for a QoS monitoring system.
+Your job is to take CONCRETE remediation actions when network metrics show degradation.
+Never refuse to act when anomaly_detected=true or sla_alert=true — these are confirmed signals, not estimates.
 
-Action policy based on available features:
-- High plr, e2e_delay_ms, jitter_ms, and high SLA risk → prefer reroute_traffic or apply_qos_profile.
-- High dataplane_latency_ms or ctrl_plane_rtt_ms with rising rx_dropped or tx_dropped → prefer reroute_traffic or throttle_link cautiously.
-- Low streaming_mos or mos_voice with high buffering_ratio, rebuffering_freq, rebuffering_count, or total_stall_seconds → prefer apply_qos_profile first, then reroute if needed.
-- Low throughput_mbps with degraded effective_bitrate_mbps and high flow_count → prefer selective throttling and QoS profile changes.
-- Critical uncertainty → no-op plus escalate recommendation.
+Decision rules (apply in order):
+1. If anomaly_detected=true AND sla_alert=true → CRITICAL situation. Call reroute_traffic OR apply_qos_profile immediately, then decision_summary_tool.
+2. If plr > 0.05 OR e2e_delay_ms > 100 OR jitter_ms > 20 → call apply_qos_profile to prioritize traffic.
+3. If dataplane_latency_ms > 10 OR rx_dropped > 20 → call reroute_traffic to bypass congested path.
+4. If mos_voice < 3.0 OR streaming_mos < 3.0 → call apply_qos_profile with a voice/video priority profile.
+5. If throughput_mbps < 5 AND flow_count > 120 → call throttle_link to reduce congestion.
+6. ONLY call monitor_only if ALL metrics are within normal range (plr<0.02, e2e_delay<80ms, mos>3.5, no anomaly, no sla_alert).
 
-After all remediation tools are done, you MUST call the decision_summary_tool with:
-  - decision_summary: one sentence summarizing what was done and why
-  - recommended_actions: list of actions taken (strings)
+confidence scoring:
+- anomaly_detected=true + sla_alert=true → confidence >= 0.85
+- only one of them → confidence 0.65-0.80
+- neither → confidence 0.50, use monitor_only
+
+After taking action(s), you MUST call decision_summary_tool as the FINAL step with:
+  - decision_summary: one sentence describing what action was taken and why
+  - recommended_actions: list of action strings (e.g. ["apply_qos_profile on switch-core-01", "monitor traffic"])
   - confidence: float 0.0-1.0
-  - risk_level: one of low / medium / high / critical
-Do NOT output JSON as text. Always call decision_summary_tool as the final step.
+  - risk_level: low / medium / high / critical
+Do NOT output JSON as text. Always call decision_summary_tool last.
 """
 
 # ──────────────────────────────────────────
@@ -154,16 +157,61 @@ class OptimizationState(TypedDict):
 def input_validation_node(state: OptimizationState) -> dict:
     avg = state.get("avg_30s") or {}
     device = state.get("device") or "unknown-device"
-    anomaly = state.get("anomaly_result")
-    sla = state.get("sla_result")
+    anomaly = state.get("anomaly_result") or {}
+    sla = state.get("sla_result") or {}
+    context = state.get("context", "")
 
-    summary = (
-        f"Device: {device}\n"
-        f"Anomaly result: {json.dumps(anomaly, default=str)}\n"
-        f"SLA result: {json.dumps(sla, default=str)}\n"
-        f"30-second averages: {json.dumps(avg, default=str)}\n"
-        f"Context: {state.get('context', '')}"
-    )
+    # Extract key signals explicitly so LLM doesn't have to parse nested JSON
+    anomaly_detected = anomaly.get("anomaly_detected", False) or anomaly.get("anomaly_windows", 0) > 0
+    sla_alert = sla.get("sla_alert", False) or sla.get("alert_count", 0) > 0
+    plr = avg.get("plr", 0)
+    delay = avg.get("e2e_delay_ms", 0)
+    mos = avg.get("mos_voice", 0)
+    jitter = avg.get("jitter_ms", 0)
+    dp_latency = avg.get("dataplane_latency_ms", 0)
+    rx_dropped = avg.get("rx_dropped", 0)
+    throughput = avg.get("throughput_mbps", 0)
+    streaming_mos = avg.get("streaming_mos", 0)
+
+    alert_lines = []
+    if anomaly_detected:
+        alert_lines.append(f"  ⚠ ANOMALY DETECTED (score={anomaly.get('anomaly_score', anomaly.get('anomaly_windows', '?'))})")
+    if sla_alert:
+        alert_lines.append(f"  ⚠ SLA VIOLATION FORECASTED (alert_rate={sla.get('alert_rate', sla.get('sla_violation_probability', '?'))})")
+    if plr > 0.05:
+        alert_lines.append(f"  ⚠ HIGH PACKET LOSS: {plr:.4f} ({plr*100:.2f}%)")
+    if delay > 100:
+        alert_lines.append(f"  ⚠ HIGH LATENCY: {delay:.1f}ms")
+    if mos > 0 and mos < 3.0:
+        alert_lines.append(f"  ⚠ POOR VOICE QUALITY: MOS={mos:.2f}")
+
+    alerts_str = "\n".join(alert_lines) if alert_lines else "  ✓ No active alerts"
+
+    summary = f"""NETWORK OPTIMIZATION REQUEST
+Device: {device}
+Context: {context}
+
+=== ACTIVE ALERTS ===
+{alerts_str}
+
+=== KEY METRICS (30s avg) ===
+  Packet Loss Rate  : {plr:.4f} ({plr*100:.2f}%)
+  E2E Delay         : {delay:.1f} ms
+  Jitter            : {jitter:.1f} ms
+  Voice MOS         : {mos:.2f}
+  Streaming MOS     : {streaming_mos:.2f}
+  Dataplane Latency : {dp_latency:.1f} ms
+  RX Dropped        : {rx_dropped:.0f} packets
+  Throughput        : {throughput:.2f} Mbps
+
+=== ANOMALY DETECTION RESULT ===
+{json.dumps(anomaly, default=str)}
+
+=== SLA FORECASTING RESULT ===
+{json.dumps(sla, default=str)}
+
+Based on the above, take the appropriate remediation action now.
+"""
     messages = [
         SystemMessage(content=OPTIMIZATION_SYSTEM_PROMPT),
         HumanMessage(content=summary),

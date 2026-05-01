@@ -445,7 +445,7 @@ function ToolTraceCard({ entry }: { entry: ToolTraceEntry }) {
 // ─── Main page ───────────────────────────────────────────────────────────────
 
 const POLL_TELEMETRY_MS = 3_000   // status + raw rows
-const POLL_PIPELINE_MS  = 15_000  // full AI pipeline
+const POLL_PIPELINE_MS  = 30_000  // full AI pipeline — 30s to respect Groq free-tier rate limits
 
 export default function OptimizationPage() {
   const router = useRouter()
@@ -520,7 +520,6 @@ export default function OptimizationPage() {
       setResult(res)
       setPipelineError(null)
       setLastRun(new Date())
-      return { ok: true, backoffMs: POLL_PIPELINE_MS }
 
       // Fallback: build a history point from avg_metrics when /latest is unavailable
       const avgM = (res.telemetry_summary as { avg_metrics?: Record<string, number> })?.avg_metrics
@@ -545,6 +544,8 @@ export default function OptimizationPage() {
           return next.length > 40 ? next.slice(-40) : next
         })
       }
+
+      return { ok: true, backoffMs: POLL_PIPELINE_MS }
     } catch (error) {
       const message = getApiErrorMessage(error)
       setPipelineError(message)
@@ -718,8 +719,13 @@ export default function OptimizationPage() {
         </div>
 
         <div className="ml-auto flex items-center gap-4">
-          {/* Live indicator */}
-          {isLive ? (
+          {/* Connection error badge */}
+          {pipelineError ? (
+            <span className="flex items-center gap-2 px-3 py-1 rounded-full bg-red-500/10 border border-red-500/40 animate-pulse">
+              <WifiOff className="w-3.5 h-3.5 text-red-400" />
+              <span className="text-xs font-semibold text-red-400">Backend offline — retrying in {countdown}s</span>
+            </span>
+          ) : isLive ? (
             <span className="flex items-center gap-2 px-3 py-1 rounded-full bg-emerald-400/10 border border-emerald-400/30">
               <span className="relative flex h-2 w-2">
                 <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75" />
@@ -734,10 +740,12 @@ export default function OptimizationPage() {
             </span>
           )}
           {/* Pipeline auto-refresh */}
-          <div className="flex items-center gap-1.5 text-xs text-muted">
-            <RefreshCw className={`w-3.5 h-3.5 ${running ? 'animate-spin text-primary' : ''}`} />
-            <span>Refresh in <span className="text-white font-semibold">{countdown}s</span></span>
-          </div>
+          {!pipelineError && (
+            <div className="flex items-center gap-1.5 text-xs text-muted">
+              <RefreshCw className={`w-3.5 h-3.5 ${running ? 'animate-spin text-primary' : ''}`} />
+              <span>Refresh in <span className="text-white font-semibold">{countdown}s</span></span>
+            </div>
+          )}
           {lastRun && (
             <span className="text-xs text-muted hidden sm:block">
               Updated {lastRun.toLocaleTimeString()}

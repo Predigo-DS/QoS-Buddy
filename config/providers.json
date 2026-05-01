@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$comment": "Centralized provider configuration for QoS-Buddy. Add new providers here - no code changes needed!",
   "default_provider": "groq",
-  "default_model": "llama-3.1-8b-instant",
+  "default_model": "llama-3.3-70b-versatile",
   "providers": {
     "groq": {
       "display_name": "Groq",

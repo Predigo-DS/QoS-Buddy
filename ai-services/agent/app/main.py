@@ -711,7 +711,13 @@ async def optimization_respond(req: OptimizationRequest):
     except HTTPException:
         raise
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        err = str(e)
+        # Reset cached graph on any LLM error so next call rebuilds cleanly
+        app.state.optimization_graph = None
+        # Detect Groq / provider rate limit
+        if "429" in err or "rate_limit" in err.lower() or "rate limit" in err.lower():
+            raise HTTPException(status_code=429, detail=f"LLM rate limit reached — retry after 60s. ({err})")
+        raise HTTPException(status_code=500, detail=err)
 
 
 @app.post("/v1/chat/completions")
