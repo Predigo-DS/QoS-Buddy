@@ -175,3 +175,39 @@ export async function predictSla(data: SlaPredictRequest): Promise<SlaPredictRes
   const response = await apiClient.post<SlaPredictResponse>('/api/ai/sla/predict', data)
   return response.data
 }
+
+export interface ToolTraceEntry {
+  tool: string
+  args: Record<string, unknown>
+  result: Record<string, unknown> | unknown
+}
+
+export interface OptimizationDecision {
+  decision_summary: string
+  recommended_actions: string[]
+  confidence: number
+  risk_level: string
+  [key: string]: unknown
+}
+
+export interface OptimizationTelemetrySummary {
+  row_count: number
+  window_seconds: number
+  avg_metrics: Record<string, number>
+  [key: string]: unknown
+}
+
+export interface OptimizationResponse {
+  telemetry_summary: OptimizationTelemetrySummary
+  anomaly_response: Record<string, unknown>
+  sla_response: Record<string, unknown>
+  optimization_decision: OptimizationDecision | null
+  tool_trace: ToolTraceEntry[]
+  mock_mode: boolean
+  [key: string]: unknown
+}
+
+export async function runMockOptimization(): Promise<OptimizationResponse> {
+  const response = await apiClient.post<OptimizationResponse>('/api/ai/optimize/mock')
+  return response.data
+}
