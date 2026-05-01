@@ -26,6 +26,7 @@ import java.util.Map;
 public class AiInferenceServiceImpl implements AiInferenceService {
 
     private final RestClient.Builder restClientBuilder;
+    private final TelemetryBufferService telemetryBufferService;
     private final ObjectMapper objectMapper = new ObjectMapper();
 
     @Value("${app.ai.anomaly-base-url:http://localhost:8003}")
@@ -59,7 +60,10 @@ public class AiInferenceServiceImpl implements AiInferenceService {
 
     @Override
     public OptimizationResponseDto runMockOptimization() {
-        List<Map<String, Object>> rows = buildMockTelemetryRows();
+        boolean liveMode = telemetryBufferService.hasEnough(35);
+        List<Map<String, Object>> rows = liveMode
+                ? telemetryBufferService.getLatest(35)
+                : buildMockTelemetryRows();
 
         // Step 1: anomaly detection — strip string fields, service only accepts numeric
         // values
@@ -111,7 +115,7 @@ public class AiInferenceServiceImpl implements AiInferenceService {
                 .slaResponse(slaResult)
                 .optimizationDecision(agentResult != null ? agentResult.get("decision") : null)
                 .toolTrace(agentResult != null ? agentResult.get("tool_trace") : null)
-                .mockMode(true)
+                .mockMode(!liveMode)
                 .build();
     }
 

@@ -211,3 +211,18 @@ export async function runMockOptimization(): Promise<OptimizationResponse> {
   const response = await apiClient.post<OptimizationResponse>('/api/ai/optimize/mock')
   return response.data
 }
+
+export interface TelemetryStatus {
+  buffer_size: number
+  live_mode: boolean
+}
+
+export async function getTelemetryStatus(): Promise<TelemetryStatus> {
+  const response = await apiClient.get<TelemetryStatus>('/api/telemetry/status')
+  return response.data
+}
+
+export async function getLatestTelemetry(n = 60): Promise<Record<string, number | string | boolean>[]> {
+  const response = await apiClient.get<Record<string, number | string | boolean>[]>(`/api/telemetry/latest?n=${n}`)
+  return response.data
+}

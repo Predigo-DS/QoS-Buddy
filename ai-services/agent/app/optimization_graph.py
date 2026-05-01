@@ -33,11 +33,30 @@ def apply_qos_profile(device: str, profile: str) -> dict:
     return {"status": "ok", "action": "apply_qos_profile", "device": device, "profile": profile}
 
 
+def monitor_only(device: str, reason: str = "") -> dict:
+    args = json.dumps({"device": device, "reason": reason})
+    print(f"[MOCK_TOOL] monitor_only args={args}")
+    return {"status": "ok", "action": "monitor_only", "device": device, "reason": reason, "message": "No action taken — monitoring only."}
+
+
+def _decision_summary(decision_summary: str, recommended_actions: list, confidence: float, risk_level: str) -> dict:
+    """Captures the agent's final structured decision."""
+    print(f"[DECISION] risk={risk_level} confidence={confidence}")
+    return {
+        "status": "ok",
+        "decision_summary": decision_summary,
+        "recommended_actions": recommended_actions,
+        "confidence": confidence,
+        "risk_level": risk_level,
+    }
+
+
 TOOL_REGISTRY = {
     "reroute_traffic": reroute_traffic,
     "throttle_link": throttle_link,
     "restart_interface": restart_interface,
     "apply_qos_profile": apply_qos_profile,
+    "monitor_only": monitor_only,
 }
 
 # LangChain tool schemas for binding
@@ -64,11 +83,31 @@ def apply_qos_profile_tool(device: str, profile: str) -> dict:
     return apply_qos_profile(device, profile)
 
 
+@lc_tool
+def monitor_only_tool(device: str, reason: str = "") -> dict:
+    """Take no remediation action — continue monitoring the device. Use when uncertainty is high or situation is stable."""
+    return monitor_only(device, reason)
+
+
+@lc_tool
+def decision_summary_tool(decision_summary: str, recommended_actions: list, confidence: float, risk_level: str) -> dict:
+    """REQUIRED: Call this tool LAST to submit your final structured decision after all actions are complete.
+    Args:
+        decision_summary: One sentence describing what was done and why.
+        recommended_actions: List of action strings taken or recommended.
+        confidence: Your confidence score between 0.0 and 1.0.
+        risk_level: Current risk level: low, medium, high, or critical.
+    """
+    return _decision_summary(decision_summary, recommended_actions, confidence, risk_level)
+
+
 BOUND_TOOLS = [
     reroute_traffic_tool,
     throttle_link_tool,
     restart_interface_tool,
     apply_qos_profile_tool,
+    monitor_only_tool,
+    decision_summary_tool,
 ]
 
 OPTIMIZATION_SYSTEM_PROMPT = """You are a network optimization agent.
@@ -85,8 +124,12 @@ Action policy based on available features:
 - Low throughput_mbps with degraded effective_bitrate_mbps and high flow_count → prefer selective throttling and QoS profile changes.
 - Critical uncertainty → no-op plus escalate recommendation.
 
-After using tools, summarize your decision as a JSON object with keys:
-  decision_summary, recommended_actions (list of strings), confidence (0.0-1.0), risk_level (low/medium/high/critical)
+After all remediation tools are done, you MUST call the decision_summary_tool with:
+  - decision_summary: one sentence summarizing what was done and why
+  - recommended_actions: list of actions taken (strings)
+  - confidence: float 0.0-1.0
+  - risk_level: one of low / medium / high / critical
+Do NOT output JSON as text. Always call decision_summary_tool as the final step.
 """
 
 # ──────────────────────────────────────────
@@ -152,6 +195,8 @@ def tool_execution_node(state: OptimizationState) -> dict:
             "throttle_link_tool": throttle_link_tool,
             "restart_interface_tool": restart_interface_tool,
             "apply_qos_profile_tool": apply_qos_profile_tool,
+            "monitor_only_tool": monitor_only_tool,
+            "decision_summary_tool": decision_summary_tool,
         }
         fn = fn_map.get(tool_name)
         if fn:
@@ -166,8 +211,21 @@ def tool_execution_node(state: OptimizationState) -> dict:
 
 
 def final_decision_node(state: OptimizationState) -> dict:
+    # First: check if decision_summary_tool was called — it contains the structured decision
+    tool_trace = state.get("tool_trace") or []
+    for entry in reversed(tool_trace):
+        if entry.get("tool") == "decision_summary_tool":
+            result = entry.get("result", {})
+            if isinstance(result, dict) and "decision_summary" in result:
+                return {"decision_output": {
+                    "decision_summary": result.get("decision_summary", ""),
+                    "recommended_actions": result.get("recommended_actions", []),
+                    "confidence": float(result.get("confidence", 0.5)),
+                    "risk_level": str(result.get("risk_level", "medium")),
+                }}
+
+    # Fallback: extract from last AI message text
     messages = state["messages"]
-    # Extract last AI message text as final summary
     last_ai = None
     for msg in reversed(messages):
         if isinstance(msg, AIMessage) and isinstance(msg.content, str) and msg.content.strip():
@@ -180,7 +238,6 @@ def final_decision_node(state: OptimizationState) -> dict:
         "confidence": 0.5,
         "risk_level": "medium",
     }
-    # Attempt to parse structured JSON embedded in last AI message
     if last_ai:
         try:
             start = last_ai.find("{")
