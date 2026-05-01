@@ -212,6 +212,22 @@ export async function runMockOptimization(): Promise<OptimizationResponse> {
   return response.data
 }
 
+export function getApiErrorMessage(error: unknown): string {
+  if (axios.isAxiosError(error)) {
+    const status = error.response?.status
+    const data = error.response?.data as Record<string, unknown> | string | undefined
+    if (typeof data === 'string' && data.trim()) return data
+    if (data && typeof data === 'object') {
+      const message = data.message || data.error || data.detail
+      if (typeof message === 'string' && message.trim()) return message
+    }
+    if (status) return `HTTP ${status}`
+    return 'Network error'
+  }
+  if (error instanceof Error && error.message) return error.message
+  return 'Unexpected error'
+}
+
 export interface TelemetryStatus {
   buffer_size: number
   live_mode: boolean

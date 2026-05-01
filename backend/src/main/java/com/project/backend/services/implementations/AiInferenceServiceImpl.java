@@ -38,6 +38,9 @@ public class AiInferenceServiceImpl implements AiInferenceService {
     @Value("${app.ai.agent-base-url:http://localhost:8002}")
     private String agentBaseUrl;
 
+    @Value("${app.ai.allow-mock:true}")
+    private boolean allowMockFallback;
+
     @Override
     public JsonNode getAnomalyMetadata() {
         return get(anomalyBaseUrl + "/metadata");
@@ -179,6 +182,16 @@ public class AiInferenceServiceImpl implements AiInferenceService {
         try {
             return call.call();
         } catch (Exception ex) {
+            if (!allowMockFallback) {
+                if (ex instanceof ResponseStatusException rse) {
+                    throw rse;
+                }
+                throw new ResponseStatusException(
+                        HttpStatus.SERVICE_UNAVAILABLE,
+                        "AI service unavailable and mock fallback disabled: " + ex.getMessage(),
+                        ex
+                );
+            }
             System.out.println("[MOCK_FALLBACK] Service unavailable, using mock result: " + ex.getMessage());
             return objectMapper.valueToTree(fallback);
         }

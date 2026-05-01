@@ -18,7 +18,7 @@ import {
 import { isAuthenticated } from '@/lib/auth'
 import {
   runMockOptimization, getTelemetryStatus, getLatestTelemetry,
-  OptimizationResponse, ToolTraceEntry,
+  OptimizationResponse, ToolTraceEntry, getApiErrorMessage,
 } from '@/lib/api'
 
 // ─── Types ───────────────────────────────────────────────────────────────────
@@ -146,7 +146,15 @@ function RiskGauge({ level }: { level: string }) {
   )
 }
 
-function AiSummaryCard({ decision, isMock }: { decision: OptimizationResponse['optimization_decision']; isMock: boolean }) {
+function AiSummaryCard({
+  decision,
+  isMock,
+  errorMessage,
+}: {
+  decision: OptimizationResponse['optimization_decision']
+  isMock: boolean
+  errorMessage?: string | null
+}) {
   const summary = decision?.decision_summary ?? 'No AI insight available.'
   const actions = decision?.recommended_actions ?? []
   return (
@@ -156,9 +164,14 @@ function AiSummaryCard({ decision, isMock }: { decision: OptimizationResponse['o
           <Zap className="w-4 h-4 text-primary" />
         </div>
         <h2 className="text-base font-bold text-white">AI Executive Summary</h2>
-        {isMock && (
+        {isMock && !errorMessage && (
           <span className="ml-auto text-[10px] px-2 py-0.5 rounded-full bg-amber-400/10 border border-amber-400/30 text-amber-400">
             Mock Agent
+          </span>
+        )}
+        {errorMessage && (
+          <span className="ml-auto text-[10px] px-2 py-0.5 rounded-full bg-red-500/10 border border-red-500/30 text-red-400">
+            LLM Error
           </span>
         )}
       </div>
@@ -171,7 +184,11 @@ function AiSummaryCard({ decision, isMock }: { decision: OptimizationResponse['o
           <p className="text-[10px] font-bold text-primary tracking-widest uppercase mb-1">
             INSIGHT GENERATED · Just now
           </p>
-          <p className="text-sm text-white leading-relaxed italic">"{summary}"</p>
+          {errorMessage ? (
+            <p className="text-sm text-red-200 leading-relaxed italic">"{errorMessage}"</p>
+          ) : (
+            <p className="text-sm text-white leading-relaxed italic">"{summary}"</p>
+          )}
           {actions.length > 0 && (
             <div className="mt-3 flex flex-wrap gap-2">
               {actions.slice(0, 3).map((a: string, i: number) => (
@@ -296,32 +313,50 @@ function PortLossTable({ ports }: { ports: PortMetric[] }) {
   )
 }
 
+// Segment names matching listen.py SEGMENT_NAMES
+const SEGMENT_NAMES: Record<string, string> = {
+  '1-1': 'OUTDOOR_RAN',
+  '1-2': 'INDOOR_RAN',
+  '1-3': 'IMS_CDN',
+  '1-4': 'INTERNET',
+}
+
 function SwitchTable({ rows, avgMetrics }: {
   rows: Record<string, number | string | boolean>[]
   avgMetrics: Record<string, number>
 }) {
-  // If no real rows, build synthetic switch rows from avg_metrics
-  const displayRows: { sw: string; port: string | number; plr: number; tp: number; dp: number; mos: number }[] = []
+  type DisplayRow = { sw: string; port: string; segment: string; plr: number; tp: number; dp: number; mos: number }
+  const displayRows: DisplayRow[] = []
 
   if (rows.length > 0) {
-    const switches = [...new Set(rows.map(r => String(r.switch_id)).filter(Boolean))]
-    switches.slice(0, 8).forEach(sw => {
-      const swRows = rows.filter(r => String(r.switch_id) === sw)
+    // Group by switch_id + port_no (one row per segment link)
+    const keyMap = new Map<string, Record<string, number | string | boolean>[]>()
+    rows.forEach(r => {
+      const key = `${r.switch_id}-${r.port_no}`
+      if (!keyMap.has(key)) keyMap.set(key, [])
+      keyMap.get(key)!.push(r)
+    })
+    keyMap.forEach((portRows, key) => {
+      const [swId, portNo] = key.split('-')
+      const segName = (portRows[0]?.segment as string) || SEGMENT_NAMES[key] || `s${swId}-eth${portNo}`
       displayRows.push({
-        sw,
-        port: String(swRows[0]?.port_no ?? '—'),
-        plr:  avg(swRows, 'plr'),
-        tp:   avg(swRows, 'throughput_mbps'),
-        dp:   avg(swRows, 'dataplane_latency_ms'),
-        mos:  avg(swRows, 'mos_voice'),
+        sw:      `s${swId}`,
+        port:    `eth${portNo}`,
+        segment: segName,
+        plr:     avg(portRows, 'plr'),
+        tp:      avg(portRows, 'throughput_mbps'),
+        dp:      avg(portRows, 'dataplane_latency_ms'),
+        mos:     avg(portRows, 'mos_voice'),
       })
     })
+    displayRows.sort((a, b) => a.sw.localeCompare(b.sw) || a.port.localeCompare(b.port))
   } else if (Object.keys(avgMetrics).length > 0) {
-    // Fallback: simulate switches from pipeline avg_metrics
+    // Fallback from pipeline avg_metrics
     const base = { plr: avgMetrics.plr ?? 0, tp: avgMetrics.throughput_mbps ?? 0, dp: avgMetrics.dataplane_latency_ms ?? 0, mos: avgMetrics.mos_voice ?? 0 }
-    ;[['sw-01', 1], ['sw-01', 2], ['sw-02', 0], ['sw-02', 1]].forEach(([sw, port]) => {
-      const v = Number(port) * 0.05
-      displayRows.push({ sw: String(sw), port: Number(port), plr: base.plr * (1 + v), tp: base.tp * (1 - v * 0.3), dp: base.dp * (1 + v * 0.4), mos: base.mos * (1 - v * 0.1) })
+    const segments = [['1','1','OUTDOOR_RAN'], ['1','2','INDOOR_RAN'], ['1','3','IMS_CDN'], ['1','4','INTERNET']]
+    segments.forEach(([sw, port, seg], i) => {
+      const v = i * 0.04
+      displayRows.push({ sw: `s${sw}`, port: `eth${port}`, segment: seg, plr: base.plr * (1 + v), tp: base.tp * (1 - v * 0.2), dp: base.dp * (1 + v * 0.3), mos: Math.max(1, base.mos * (1 - v * 0.08)) })
     })
   }
 
@@ -330,7 +365,7 @@ function SwitchTable({ rows, avgMetrics }: {
       <table className="w-full text-xs">
         <thead>
           <tr className="border-b border-border">
-            {['Switch ID', 'Port', 'Status', 'Throughput', 'Latency (DP)', 'Packet Loss', 'MOS Voice'].map(h => (
+            {['Switch', 'Port', 'Segment', 'Status', 'Throughput', 'DP Latency', 'Packet Loss', 'MOS Voice'].map(h => (
               <th key={h} className="text-left py-2 px-3 text-muted font-semibold uppercase tracking-wider text-[10px]">{h}</th>
             ))}
           </tr>
@@ -343,13 +378,18 @@ function SwitchTable({ rows, avgMetrics }: {
                 <td className="py-2.5 px-3 font-semibold text-white">
                   <div className="flex items-center gap-2"><Server className="w-3 h-3 text-primary" />{d.sw}</div>
                 </td>
-                <td className="py-2.5 px-3 text-muted">{String(d.port)}</td>
+                <td className="py-2.5 px-3 text-muted font-mono">{d.port}</td>
+                <td className="py-2.5 px-3">
+                  <span className="text-[10px] px-2 py-0.5 rounded bg-primary/10 text-primary border border-primary/20 font-semibold">
+                    {d.segment}
+                  </span>
+                </td>
                 <td className="py-2.5 px-3">
                   <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${ok ? 'bg-emerald-400/10 text-emerald-400' : 'bg-red-400/10 text-red-400'}`}>
                     {ok ? '● Active' : '● Degraded'}
                   </span>
                 </td>
-                <td className="py-2.5 px-3 text-white">{d.tp.toFixed(1)} Mbps</td>
+                <td className="py-2.5 px-3 text-white">{d.tp.toFixed(2)} Mbps</td>
                 <td className="py-2.5 px-3 text-white">{d.dp.toFixed(1)} ms</td>
                 <td className={`py-2.5 px-3 font-semibold ${d.plr > 0.05 ? 'text-red-400' : 'text-emerald-400'}`}>
                   {(d.plr * 100).toFixed(2)}%
@@ -417,13 +457,16 @@ export default function OptimizationPage() {
   const [telemetryRows, setTelemetryRows] = useState<Record<string, number | string | boolean>[]>([])
 
   const [result, setResult] = useState<OptimizationResponse | null>(null)
+  const [pipelineError, setPipelineError] = useState<string | null>(null)
   const [running, setRunning] = useState(false)
   const [lastRun, setLastRun] = useState<Date | null>(null)
   const [countdown, setCountdown] = useState(POLL_PIPELINE_MS / 1000)
+  const [pipelineDelayMs, setPipelineDelayMs] = useState(POLL_PIPELINE_MS)
 
   const pipelineTimer = useRef<ReturnType<typeof setInterval> | null>(null)
   const countdownTimer = useRef<ReturnType<typeof setInterval> | null>(null)
   const telemetryTimer = useRef<ReturnType<typeof setInterval> | null>(null)
+  const pipelineDelayRef = useRef(POLL_PIPELINE_MS)
 
   // ── Auth guard ─────────────────────────────────────────────────────────────
   useEffect(() => {
@@ -475,7 +518,9 @@ export default function OptimizationPage() {
     try {
       const res = await runMockOptimization()
       setResult(res)
+      setPipelineError(null)
       setLastRun(new Date())
+      return { ok: true, backoffMs: POLL_PIPELINE_MS }
 
       // Fallback: build a history point from avg_metrics when /latest is unavailable
       const avgM = (res.telemetry_summary as { avg_metrics?: Record<string, number> })?.avg_metrics
@@ -500,32 +545,55 @@ export default function OptimizationPage() {
           return next.length > 40 ? next.slice(-40) : next
         })
       }
-    } catch { /* ignore */ } finally {
+    } catch (error) {
+      const message = getApiErrorMessage(error)
+      setPipelineError(message)
+
+      const current = pipelineDelayRef.current
+      const isRateLimited = message.includes('HTTP 429')
+      const isBackendDown = message.includes('Network error') || message.includes('HTTP 503') || message.includes('HTTP 502') || message.includes('HTTP 500')
+      const minBackoff = isRateLimited ? 60_000 : isBackendDown ? 30_000 : 15_000
+      const maxBackoff = isRateLimited ? 180_000 : 120_000
+      const nextBackoff = Math.min(maxBackoff, Math.max(minBackoff, current * 2))
+      return { ok: false, backoffMs: nextBackoff }
+    } finally {
       setRunning(false)
     }
   }, [running])
+
+  const schedulePipeline = useCallback((delayMs: number) => {
+    if (pipelineTimer.current) clearTimeout(pipelineTimer.current)
+    pipelineTimer.current = setTimeout(async () => {
+      const result = await runPipeline()
+      if (!result) return
+      pipelineDelayRef.current = result.backoffMs
+      setPipelineDelayMs(result.backoffMs)
+      setCountdown(Math.round(result.backoffMs / 1000))
+      schedulePipeline(result.backoffMs)
+    }, delayMs)
+  }, [runPipeline])
 
   // ── Start polling on mount ─────────────────────────────────────────────────
   useEffect(() => {
     fetchTelemetry()
     telemetryTimer.current = setInterval(fetchTelemetry, POLL_TELEMETRY_MS)
 
-    // Run pipeline immediately then every 15s
-    runPipeline()
-    setCountdown(POLL_PIPELINE_MS / 1000)
-
-    pipelineTimer.current = setInterval(() => {
-      runPipeline()
-      setCountdown(POLL_PIPELINE_MS / 1000)
-    }, POLL_PIPELINE_MS)
+    // Run pipeline immediately then schedule with backoff
+    runPipeline().then((result) => {
+      if (!result) return
+      pipelineDelayRef.current = result.backoffMs
+      setPipelineDelayMs(result.backoffMs)
+      setCountdown(Math.round(result.backoffMs / 1000))
+      schedulePipeline(result.backoffMs)
+    })
 
     countdownTimer.current = setInterval(() => {
-      setCountdown(prev => (prev <= 1 ? POLL_PIPELINE_MS / 1000 : prev - 1))
+      setCountdown(prev => (prev <= 1 ? Math.round(pipelineDelayRef.current / 1000) : prev - 1))
     }, 1000)
 
     return () => {
       if (telemetryTimer.current) clearInterval(telemetryTimer.current)
-      if (pipelineTimer.current)  clearInterval(pipelineTimer.current)
+      if (pipelineTimer.current)  clearTimeout(pipelineTimer.current)
       if (countdownTimer.current) clearInterval(countdownTimer.current)
     }
   }, []) // eslint-disable-line react-hooks/exhaustive-deps
@@ -699,7 +767,7 @@ export default function OptimizationPage() {
             <AlertBanner anomalyResponse={anomaly} slaResponse={sla} />
 
             {/* AI Summary */}
-            <AiSummaryCard decision={decision} isMock={isMockMode} />
+            <AiSummaryCard decision={decision} isMock={isMockMode} errorMessage={pipelineError} />
 
             {/* 4 KPI cards */}
             <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
