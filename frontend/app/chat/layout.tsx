@@ -33,8 +33,8 @@ export default function ChatLayout({ children }: { children: React.ReactNode }) 
   return (
     <NuqsAdapter>
       <BackendReadinessGate>
-        <div className="chat-theme min-h-screen bg-background text-text-main">
-          <header className="sticky top-0 z-40 border-b border-border bg-surface/70 backdrop-blur-md">
+        <div className="chat-theme flex h-screen flex-col bg-background text-text-main">
+          <header className="z-40 border-b border-border bg-surface/70 backdrop-blur-md">
             <div className="mx-auto flex h-14 w-full max-w-7xl items-center justify-between px-4 sm:px-6 lg:px-8">
               <Link href="/dashboard" className="flex items-center gap-3 group">
                 <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-primary to-secondary flex items-center justify-center group-hover:scale-105 transition-transform">
@@ -55,7 +55,9 @@ export default function ChatLayout({ children }: { children: React.ReactNode }) 
               </div>
             </div>
           </header>
-          {children}
+          <div className="flex-1 min-h-0 overflow-auto">
+            {children}
+          </div>
         </div>
       </BackendReadinessGate>
     </NuqsAdapter>

@@ -307,6 +307,14 @@ class VectorStoreClient:
         sentences = [s.strip() for s in sentences if s.strip()]
 
         if len(sentences) <= 1:
+            # Short segments: keep if long enough, filter out question fragments
+            text = sentences[0] if sentences else ""
+            if len(text) < 80:
+                return []
+            return sentences
+
+        if not sentences:
+            return []
             return sentences
 
         batch_size = 64
@@ -417,6 +425,24 @@ class VectorStoreClient:
         if not chunks:
             return []
 
+        # Filter out low-quality chunks: too short, question-only fragments, or bare titles
+        valid_chunks = []
+        for chunk in chunks:
+            stripped = chunk.strip()
+            if len(stripped) < 80:
+                continue
+            # Skip question-only fragments (ends with ? and is short)
+            if stripped.endswith('?') and len(stripped) < 100:
+                continue
+            # Skip explicit question titles: "Q: ..." prefix
+            if re.match(r'^Q:\s*', stripped, re.IGNORECASE):
+                continue
+            valid_chunks.append(chunk)
+
+        if not valid_chunks:
+            return []
+
+        chunks = valid_chunks
         dense_vectors = embedder.encode(chunks).tolist()
 
         points, ids = [], []
@@ -460,6 +486,91 @@ class VectorStoreClient:
             )
         self.client.upsert(collection_name=COLLECTION, points=points)
         return ids
+
+    def ingest_text_with_details(self, text: str, metadata: dict, embedder=None) -> dict:
+        """Like ingest_text but returns details about chunking and filtering."""
+        embedder = embedder or self.embedder
+        payload_metadata = dict(metadata or {})
+        payload_metadata.setdefault(
+            "ingested_at", datetime.now(timezone.utc).isoformat()
+        )
+
+        # Use semantic chunking (falls back to recursive if embedder unavailable)
+        try:
+            chunks = self._semantic_split(text)
+        except Exception:
+            splitter = RecursiveCharacterTextSplitter(
+                chunk_size=CHUNK_SIZE, chunk_overlap=CHUNK_OVERLAP
+            )
+            chunks = splitter.split_text(text)
+
+        if not chunks:
+            return {"chunks_created": 0, "chunks_filtered": 0, "chunk_texts": []}
+
+        # Filter and track
+        all_chunks = [c.strip() for c in chunks]
+        valid_chunks = []
+        for stripped in all_chunks:
+            if len(stripped) < 80:
+                continue
+            if stripped.endswith('?') and len(stripped) < 100:
+                continue
+            if re.match(r'^Q:\s*', stripped, re.IGNORECASE):
+                continue
+            valid_chunks.append(stripped)
+
+        chunks_filtered = len(all_chunks) - len(valid_chunks)
+
+        if not valid_chunks:
+            return {"chunks_created": 0, "chunks_filtered": chunks_filtered, "chunk_texts": []}
+
+        # Embed and store
+        chunks = valid_chunks
+        dense_vectors = embedder.encode(chunks).tolist()
+        points, ids = [], []
+        for chunk_idx, (chunk, dense_vec) in enumerate(zip(chunks, dense_vectors)):
+            pid = str(uuid.uuid4())
+            ids.append(pid)
+            sparse_vec = self._generate_sparse_vector(chunk)
+            payload = {
+                "text": chunk,
+                "source": payload_metadata.get("source", ""),
+                "url": payload_metadata.get("url", ""),
+                "title": payload_metadata.get("title", ""),
+                "source_type": payload_metadata.get("source_type", ""),
+                "content_type": payload_metadata.get("content_type", ""),
+                "tags": payload_metadata.get("tags", []),
+                "quality_score": payload_metadata.get("llm_quality_score", 0),
+                "technical_score": payload_metadata.get("technical_score", 0),
+                "vendor": payload_metadata.get("vendor", ""),
+                "technology": payload_metadata.get("technology", []),
+                "version_tag": payload_metadata.get("version_tag", ""),
+                "has_code": payload_metadata.get("code_block") is not None,
+                "context_summary": payload_metadata.get("context_summary", ""),
+                "chunk_index": chunk_idx,
+                "parent_doc_hash": payload_metadata.get("content_hash", ""),
+                "ingested_at": payload_metadata.get("ingested_at", ""),
+                "status": payload_metadata.get("status", ""),
+                "llm_action": payload_metadata.get("llm_action", ""),
+                "llm_verified": payload_metadata.get("llm_verified", False),
+                "text_was_enriched": payload_metadata.get("text_was_enriched", False),
+                "problem_summary": payload_metadata.get("problem_summary", ""),
+            }
+            points.append(
+                PointStruct(
+                    id=pid,
+                    vector={"dense": dense_vec, "sparse": sparse_vec},
+                    payload=payload,
+                )
+            )
+        if points:
+            self.client.upsert(collection_name=COLLECTION, points=points)
+
+        return {
+            "chunks_created": len(ids),
+            "chunks_filtered": chunks_filtered,
+            "chunk_texts": [c[:200] for c in valid_chunks],
+        }
 
     def hybrid_search(
         self,

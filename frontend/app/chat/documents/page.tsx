@@ -38,6 +38,17 @@ type BatchIngestResult = {
   total_chunks: number;
   sources: Record<string, number>;
   errors: Array<{ index: number; error?: string; source?: string }>;
+  document_details?: Array<{
+    index: number;
+    source: string;
+    title: string;
+    status: string;
+    chunks_created?: number;
+    chunks_filtered?: number;
+    chunk_previews?: string[];
+    reformulated?: boolean;
+    error?: string;
+  }>;
 };
 
 const ACCEPTED_EXTENSIONS = [".pdf", ".txt", ".md", ".json"];
@@ -729,22 +740,71 @@ export default function DocumentsPage(): React.ReactNode {
                       )}
 
                       {jsonProgress.results.errors.length > 0 && (
-                        <details className="mt-2">
-                          <summary className="cursor-pointer text-xs text-muted hover:text-text-main">
-                            Show errors
-                          </summary>
-                          <ul className="mt-1 space-y-1 text-xs text-red-400">
-                            {jsonProgress.results.errors.slice(0, 10).map((err, i) => (
-                              <li key={i}>
-                                Doc #{err.index}: {err.error}
-                                {err.source && ` (${err.source})`}
-                              </li>
-                            ))}
-                          </ul>
-                        </details>
-                      )}
-                    </div>
-                  )}
+                         <details className="mt-2">
+                           <summary className="cursor-pointer text-xs text-muted hover:text-text-main">
+                             Show errors
+                           </summary>
+                           <ul className="mt-1 space-y-1 text-xs text-red-400">
+                             {jsonProgress.results.errors.slice(0, 10).map((err, i) => (
+                               <li key={i}>
+                                 Doc #{err.index}: {err.error}
+                                 {err.source && ` (${err.source})`}
+                               </li>
+                             ))}
+                           </ul>
+                         </details>
+                       )}
+
+                       {jsonProgress.results.document_details && jsonProgress.results.document_details.length > 0 && (
+                         <details className="mt-3">
+                           <summary className="cursor-pointer text-xs text-muted hover:text-text-main">
+                             Show ingestion details ({jsonProgress.results.document_details.length} documents)
+                           </summary>
+                           <div className="mt-2 max-h-60 overflow-y-auto space-y-1 text-xs border border-border rounded p-2">
+                             {jsonProgress.results.document_details.map((detail) => (
+                               <div key={detail.index} className={`p-2 rounded border ${detail.status === 'error' ? 'border-red-500/30 bg-red-500/5' : 'border-border/50 bg-background/50'}`}>
+                                 <div className="flex items-center justify-between">
+                                   <span className="font-medium truncate max-w-[200px]">{detail.title || `Doc #${detail.index}`}</span>
+                                   <div className="flex items-center gap-2 flex-shrink-0">
+                                     {detail.reformulated !== undefined && (
+                                       <span className={detail.reformulated ? 'text-green-400' : 'text-orange-400'}>
+                                         {detail.reformulated ? '✓' : '⚠'}
+                                       </span>
+                                     )}
+                                     {detail.chunks_created !== undefined && (
+                                       <span className="text-muted">{detail.chunks_created} chunks{detail.chunks_filtered > 0 ? `, ${detail.chunks_filtered} filtered` : ''}</span>
+                                     )}
+                                   </div>
+                                 </div>
+                                 {detail.chunk_previews?.length > 0 && (
+                                   <p className="mt-1 text-muted line-clamp-2">{detail.chunk_previews[0]}</p>
+                                 )}
+                                 {detail.error && (
+                                   <p className="mt-1 text-red-400">{detail.error}</p>
+                                 )}
+                               </div>
+                             ))}
+                           </div>
+                           <div className="mt-2">
+                             <button
+                               onClick={() => {
+                                 const blob = new Blob([JSON.stringify(jsonProgress.results.document_details, null, 2)], { type: 'application/json' });
+                                 const url = URL.createObjectURL(blob);
+                                 const a = document.createElement('a');
+                                 a.href = url;
+                                 a.download = 'ingestion-log.json';
+                                 a.click();
+                                 URL.revokeObjectURL(url);
+                               }}
+                               className="text-xs text-muted hover:text-text-main underline"
+                             >
+                               Download ingestion log (JSON)
+                             </button>
+                           </div>
+                         </details>
+                       )}
+                     </div>
+                   )}
                 </div>
               )}
 

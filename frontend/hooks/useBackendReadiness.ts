@@ -167,14 +167,7 @@ export function useBackendReadiness() {
     runIdRef.current = runId;
     const startedAt = Date.now();
 
-    setSnapshot({
-      phase: "checking",
-      agentReady: false,
-      ragReady: false,
-      ragWarmup: "idle",
-      ragDownloading: false,
-      ragDownloadProgress: 0,
-    });
+    // Reset tracking state
     ragWarmupRef.current = "idle";
     ragDownloadingRef.current = false;
     downloadStartedAtRef.current = null;
@@ -221,7 +214,34 @@ export function useBackendReadiness() {
       timerRef.current = window.setTimeout(loop, pollIntervalMs);
     };
 
-    void loop();
+    // Run first check immediately (synchronously await) so we know on mount
+    // whether services are already ready. If they are, skip the modal entirely.
+    (async () => {
+      const result = await checkOnce();
+      if (runId !== runIdRef.current) return;
+
+      const now = Date.now();
+      const healthy = result.agentReady && result.ragReady;
+
+      if (healthy) {
+        // Services already ready — skip modal completely
+        setSnapshot({
+          phase: "ready",
+          ...result,
+          lastCheckedAt: now,
+        });
+        return;
+      }
+
+      // Services not ready — show the modal and start polling
+      setSnapshot({
+        phase: "checking",
+        ...result,
+        lastCheckedAt: now,
+      });
+
+      timerRef.current = window.setTimeout(loop, pollIntervalMs);
+    })();
   }, [checkOnce, clearTimer, pollIntervalMs, timeoutMs]);
 
   useEffect(() => {

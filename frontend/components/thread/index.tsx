@@ -661,7 +661,7 @@ stream.submit(
   );
 
   return (
-    <div className="flex h-screen w-full overflow-hidden">
+    <div className="flex h-full w-full min-h-0">
       <div className="relative hidden lg:flex">
         <motion.div
           className="absolute z-20 h-full overflow-hidden border-r border-border bg-surface"

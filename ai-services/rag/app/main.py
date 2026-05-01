@@ -1,6 +1,6 @@
 import os
 import asyncio
-from typing import Optional
+from typing import Optional, List, Dict, Any
 from fastapi import FastAPI, HTTPException, UploadFile, File
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
@@ -134,6 +134,15 @@ class IngestTextRequest(BaseModel):
     metadata: Optional[dict] = {}
 
 
+class BatchDocument(BaseModel):
+    text: str
+    metadata: Optional[Dict[str, Any]] = {}
+
+
+class BatchIngestRequest(BaseModel):
+    documents: List[BatchDocument]
+
+
 class RetrieveRequest(BaseModel):
     query: str
     top_k: int = int(os.getenv("TOP_K", 5))
@@ -215,6 +224,55 @@ async def ingest_file(file: UploadFile = File(...)):
         )
         ids = models["vs"].ingest_text(text, {"source": filename}, models["embedder"])
         return {"filename": filename, "ingested_chunks": len(ids), "ids": ids}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/ingest/batch")
+async def ingest_batch(req: BatchIngestRequest):
+    _require_ready()
+    try:
+        total = len(req.documents)
+        ingested = 0
+        chunks = 0
+        errors = []
+        document_details = []
+
+        for idx, doc in enumerate(req.documents):
+            try:
+                result = models["vs"].ingest_text_with_details(
+                    doc.text, doc.metadata, models["embedder"]
+                )
+                ingested += 1
+                chunks += result["chunks_created"]
+                document_details.append({
+                    "index": idx,
+                    "source": doc.metadata.get("source", ""),
+                    "title": doc.metadata.get("title", ""),
+                    "status": "success",
+                    "chunks_created": result["chunks_created"],
+                    "chunks_filtered": result["chunks_filtered"],
+                    "chunk_previews": [c[:120] for c in result["chunk_texts"][:3]],
+                    "reformulated": doc.metadata.get("text_was_reformulated", False),
+                })
+            except Exception as e:
+                errors.append({"index": idx, "error": str(e), "source": doc.metadata.get("source", "")})
+                document_details.append({
+                    "index": idx,
+                    "source": doc.metadata.get("source", ""),
+                    "title": doc.metadata.get("title", ""),
+                    "status": "error",
+                    "error": str(e),
+                    "reformulated": doc.metadata.get("text_was_reformulated", False),
+                })
+
+        return {
+            "total_documents": total,
+            "ingested_documents": ingested,
+            "total_chunks": chunks,
+            "errors": errors,
+            "document_details": document_details,
+        }
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 

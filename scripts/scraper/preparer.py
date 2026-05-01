@@ -157,6 +157,18 @@ class ProgressTracker:
         )
 
 
+def make_phase_bar(total: int, desc: str) -> tqdm:
+    """Create a consistent tqdm bar for phase-level progress."""
+    return tqdm(
+        total=total,
+        desc=desc,
+        file=sys.stdout,
+        leave=True,
+        bar_format="{l_bar}{bar:30}{r_bar}",
+        dynamic_ncols=True,
+    )
+
+
 # ──────────────────────────────────────────────────────────
 # CONFIGURATION
 # ──────────────────────────────────────────────────────────
@@ -171,7 +183,7 @@ class PipelineConfig:
     
     # Processing Settings
     MIN_QUALITY_SCORE: int = 4
-    MAX_CONCURRENT_LLM_CALLS: int = 5
+    MAX_CONCURRENT_LLM_CALLS: int = 8
     LLM_REQUEST_TIMEOUT: int = 120
     LLM_RETRY_ATTEMPTS: int = 3
     MAX_TEXT_LENGTH: int = 6000  # Truncate text for LLM to avoid token limits
@@ -284,6 +296,108 @@ class MetadataExtraction(BaseModel):
     )
 
 
+class QaReformulation(BaseModel):
+    """LLM output schema for Q&A reformulation."""
+    reformulated_text: str = Field(
+        description="Rewritten technical summary as cohesive prose. "
+                    "Remove conversational filler, keep all technical content and code blocks verbatim. "
+                    "Write in clear professional prose suitable for a RAG knowledge base."
+    )
+
+
+# ──────────────────────────────────────────────────────────
+# PYDANTIC SCHEMAS FOR BATCH LLM OUTPUT
+# ──────────────────────────────────────────────────────────
+class BatchQualityResult(BaseModel):
+    """Single result within a batch quality evaluation."""
+    doc_id: str = Field(
+        description="Unique document identifier (content_hash)"
+    )
+    quality_score: int = Field(
+        ge=1, le=10,
+        description="Technical quality score 1-10. 1=Hallucination/Wrong, 5=Vague/Outdated, 10=Perfect."
+    )
+    action: QualityAction = Field(
+        description="KEEP if score 7-10, ENRICH if score 4-6, SKIP if score < 4"
+    )
+    reason: str = Field(
+        description="Brief explanation of the score and action (1-2 sentences)"
+    )
+    version_tag: Optional[str] = Field(
+        default=None,
+        description="Detected version info (e.g., 'OpenFlow 1.3', 'Mininet 2.x', 'IOS 15.x')"
+    )
+    enriched_text: Optional[str] = Field(
+        default=None,
+        description="If ENRICH: improved text with context. DO NOT rewrite code blocks unless broken."
+    )
+
+
+class BatchQualityEvaluation(BaseModel):
+    """Batch quality evaluation output — a list of per-document results."""
+    results: List[BatchQualityResult] = Field(
+        description="List of quality evaluation results, one per input document, in order"
+    )
+
+
+class BatchMetadataResult(BaseModel):
+    """Single result within a batch metadata extraction."""
+    doc_id: str = Field(
+        description="Unique document identifier (content_hash)"
+    )
+    content_type: Literal["troubleshooting", "reference", "theory", "configuration", "tutorial"] = Field(
+        description="Primary content classification based on purpose"
+    )
+    vendor: Optional[str] = Field(
+        default=None,
+        description="Detected vendor (Cisco, Juniper, Arista, etc.) if applicable"
+    )
+    technology: List[str] = Field(
+        default_factory=list,
+        description="List of technologies mentioned (SDN, OpenFlow, QoS, BGP, etc.)"
+    )
+    problem_summary: Optional[str] = Field(
+        default=None,
+        description="For troubleshooting: brief summary of the problem being solved"
+    )
+    context_summary: Optional[str] = Field(
+        default=None,
+        description="1-2 sentence summary of the document's topic and scope for retrieval context"
+    )
+    code_block: Optional[str] = Field(
+        default=None,
+        description="Extract the primary code/config block if present, verbatim"
+    )
+    has_syntax_errors: bool = Field(
+        default=False,
+        description="True if code blocks contain obvious syntax errors"
+    )
+
+
+class BatchMetadataExtraction(BaseModel):
+    """Batch metadata extraction output — a list of per-document results."""
+    results: List[BatchMetadataResult] = Field(
+        description="List of metadata extraction results, one per input document, in order"
+    )
+
+
+class BatchReformulationResult(BaseModel):
+    """Single result within a batch Q&A reformulation."""
+    doc_id: str = Field(
+        description="Unique document identifier (content_hash)"
+    )
+    reformulated_text: str = Field(
+        description="Rewritten technical summary as cohesive prose."
+    )
+
+
+class BatchQaReformulation(BaseModel):
+    """Batch Q&A reformulation output — a list of per-document results."""
+    results: List[BatchReformulationResult] = Field(
+        description="List of reformulated texts, one per input document, in order"
+    )
+
+
 # ──────────────────────────────────────────────────────────
 # STATE DEFINITIONS
 # ──────────────────────────────────────────────────────────
@@ -343,6 +457,119 @@ CONTENT TYPE DEFINITIONS:
 - tutorial: Step-by-step learning guides with explanations and examples
 
 OUTPUT: Valid JSON matching the required schema only, no other text."""
+
+REFORMULATION_SYSTEM_PROMPT = """You are a technical documentation writer for a network engineering RAG knowledge base.
+
+TASK: Convert the provided Q&A content into a single, cohesive technical summary.
+
+RULES:
+1. Remove conversational filler ("I want to know", "Can anyone explain", "Thanks in advance", etc.)
+2. Keep ALL technical content: concepts, commands, configurations, code blocks, references
+3. Preserve code blocks verbatim — do NOT modify them
+4. Write in clear, professional prose suitable for an RAG knowledge base
+5. If multiple answers are provided, merge the best/most accurate parts into one summary
+6. If the question is "What is X?" or "Explain Y", make the answer read like an encyclopedia entry
+7. If the question is about troubleshooting, structure it as: Problem → Solution → Explanation
+
+OUTPUT: Valid JSON matching the required schema only, no other text."""
+
+
+# ──────────────────────────────────────────────────────────
+# BATCH PROMPT TEMPLATES
+# ──────────────────────────────────────────────────────────
+BATCH_QUALITY_SYSTEM_PROMPT = """You are a Senior Network Engineer reviewing technical documentation for an RAG database. 
+Focus areas: SDN, Mininet, Ryu, Cisco, QoS, OpenFlow, OVS, and network automation.
+
+TASK: Evaluate the technical accuracy of each document provided below.
+For each document:
+1. Score its technical accuracy (1-10).
+2. Check if commands/versions are outdated.
+3. If the text is vague but has potential, add brief context in enriched_text.
+4. DO NOT rewrite code blocks unless they are syntactically broken.
+5. Identify version-specific information if mentioned.
+
+SCORING GUIDE:
+- 10: Perfect technical accuracy, current versions, clear code examples
+- 8-9: Accurate with minor issues
+- 6-7: Generally correct but outdated versions or missing context
+- 4-5: Vague, potentially misleading, or significantly outdated
+- 1-3: Hallucination, fundamentally wrong, or spam
+
+ACTION GUIDE:
+- KEEP: Score 7-10
+- ENRICH: Score 4-6
+- SKIP: Score 1-3
+
+INPUT FORMAT:
+Documents are separated by "===DOC===DELIMITER==="
+Each document has title, source, type, tags, and technical score.
+
+OUTPUT: A JSON object with a "results" key containing a list of objects. Each object has:
+- doc_id: the document's content_hash
+- quality_score: integer 1-10
+- action: "KEEP", "ENRICH", or "SKIP"
+- reason: brief explanation (1-2 sentences)
+- version_tag: detected version or null
+- enriched_text: improved text if ENRICH, or null
+
+Return ONLY the JSON object, no other text."""
+
+BATCH_METADATA_SYSTEM_PROMPT = """You are a technical metadata extractor for network engineering documentation.
+
+TASK: For each document provided, extract structured metadata.
+1. Classify the content type.
+2. Extract vendor information if mentioned.
+3. List all networking technologies referenced.
+4. For troubleshooting content: summarize the core problem.
+5. Provide a 1-2 sentence topic/scope summary for retrieval context.
+6. Extract the primary code/config block if present (verbatim).
+7. Check for obvious syntax errors in code blocks.
+
+CONTENT TYPE DEFINITIONS:
+- troubleshooting: Q&A about solving specific problems, debugging
+- reference: API docs, command references, specification details
+- theory: Conceptual explanations, definitions, architecture overviews
+- configuration: Setup guides, config file examples, deployment steps
+- tutorial: Step-by-step learning guides with explanations
+
+INPUT FORMAT:
+Documents are separated by "===DOC===DELIMITER==="
+Each document contains raw text.
+
+OUTPUT: A JSON object with a "results" key containing a list of objects. Each object has:
+- doc_id: the document's content_hash
+- content_type: one of the defined types above
+- vendor: vendor name or null
+- technology: list of technology names
+- problem_summary: summary or null
+- context_summary: 1-2 sentence topic/scope summary or null
+- code_block: code block text or null
+- has_syntax_errors: boolean
+
+Return ONLY the JSON object, no other text."""
+
+BATCH_REFORMULATION_SYSTEM_PROMPT = """You are a technical documentation writer for a network engineering RAG knowledge base.
+
+TASK: For each Q&A document provided, convert it into a single, cohesive technical summary.
+
+RULES:
+1. Remove conversational filler
+2. Keep ALL technical content: concepts, commands, configurations, code blocks
+3. Preserve code blocks verbatim
+4. Write in clear, professional prose suitable for a RAG knowledge base
+5. If multiple answers are provided, merge the best/most accurate parts
+6. If the question is "What is X?" or "Explain Y", make the answer read like an encyclopedia entry
+7. If troubleshooting, structure as: Problem → Solution → Explanation
+
+INPUT FORMAT:
+Documents are separated by "===DOC===DELIMITER==="
+Each document contains raw Q&A text.
+
+OUTPUT: A JSON object with a "results" key containing a list of objects. Each object has:
+- doc_id: the document's content_hash
+- reformulated_text: the rewritten technical summary
+
+Return ONLY the JSON object, no other text."""
 
 
 # ──────────────────────────────────────────────────────────
@@ -622,6 +849,313 @@ Return metadata extraction as JSON."""
 
 
 # ──────────────────────────────────────────────────────────
+# PHASE 3.5: Q&A REFORMULATION
+# ──────────────────────────────────────────────────────────
+async def run_qa_reformulation(
+    llm: ChatOpenAI,
+    doc: Dict[str, Any],
+    max_length: int = None
+) -> Optional[str]:
+    """Reformulate a Q&A pair into a cohesive technical summary."""
+    text = doc.get("text", "")[:max_length or PipelineConfig.MAX_TEXT_LENGTH]
+    
+    prompt = f"""INPUT Q&A:
+---
+{text}
+---
+
+Reformulate this into a cohesive technical summary."""
+
+    try:
+        chain = (
+            ChatPromptTemplate.from_messages([
+                ("system", REFORMULATION_SYSTEM_PROMPT),
+                ("human", "{input}")
+            ])
+            | llm.with_structured_output(QaReformulation)
+        )
+        
+        result = await chain.ainvoke({"input": prompt})
+        return result.reformulated_text
+        
+    except Exception as e:
+        logger.warning(f"QA reformulation LLM error: {e}")
+        return None
+
+
+# ──────────────────────────────────────────────────────────
+# BATCH LLM FUNCTIONS (Phase-based parallel processing)
+# ──────────────────────────────────────────────────────────
+async def _parse_batch_quality(raw: Any) -> List[BatchQualityResult]:
+    """Parse and validate a batch quality evaluation response."""
+    if isinstance(raw, BatchQualityEvaluation):
+        return raw.results
+    if isinstance(raw, dict) and "results" in raw:
+        return [BatchQualityResult(**r) for r in raw["results"]]
+    if isinstance(raw, list):
+        return [BatchQualityResult(**r) for r in raw]
+    raise ValueError(f"Unexpected response type: {type(raw)}")
+
+
+async def _parse_batch_metadata(raw: Any) -> List[BatchMetadataResult]:
+    """Parse and validate a batch metadata extraction response."""
+    if isinstance(raw, BatchMetadataExtraction):
+        return raw.results
+    if isinstance(raw, dict) and "results" in raw:
+        return [BatchMetadataResult(**r) for r in raw["results"]]
+    if isinstance(raw, list):
+        return [BatchMetadataResult(**r) for r in raw]
+    raise ValueError(f"Unexpected response type: {type(raw)}")
+
+
+async def _parse_batch_reformulation(raw: Any) -> List[BatchReformulationResult]:
+    """Parse and validate a batch Q&A reformulation response."""
+    if isinstance(raw, BatchQaReformulation):
+        return raw.results
+    if isinstance(raw, dict) and "results" in raw:
+        return [BatchReformulationResult(**r) for r in raw["results"]]
+    if isinstance(raw, list):
+        return [BatchReformulationResult(**r) for r in raw]
+    raise ValueError(f"Unexpected response type: {type(raw)}")
+
+
+async def run_batch_quality_evaluation(
+    llm: ChatOpenAI,
+    docs: List[Dict[str, Any]],
+    batch_size: int = 15,
+    max_concurrent: int = 8,
+) -> List[QualityEvaluation]:
+    """
+    Evaluate quality of multiple documents in batches.
+    
+    Chunks docs into batches, sends each batch to LLM in parallel,
+    then returns flat list of QualityEvaluation results.
+    """
+    semaphore = asyncio.Semaphore(max_concurrent)
+    all_results: List[Optional[QualityEvaluation]] = []
+    batches = [docs[i:i + batch_size] for i in range(0, len(docs), batch_size)]
+    batch_bar = make_phase_bar(
+        len(batches),
+        f"Phase 2/4: Quality batches ({len(docs)} docs)",
+    )
+    
+    async def process_batch(batch: List[Dict[str, Any]]) -> List[BatchQualityResult]:
+        async with semaphore:
+            try:
+                # Build batch prompt with delimited documents
+                doc_parts = []
+                for i, doc in enumerate(batch):
+                    meta = doc.get("metadata", {})
+                    text = doc.get("text", "")[:PipelineConfig.MAX_TEXT_LENGTH]
+                    doc_parts.append(
+                        f"===DOC===DELIMITER===\n"
+                        f"[DOC {i}]\n"
+                        f"doc_id: {meta.get('content_hash', 'unknown')}\n"
+                        f"Title: {meta.get('title', 'N/A')}\n"
+                        f"Source: {meta.get('source', 'N/A')}\n"
+                        f"Type: {meta.get('source_type', 'N/A')}\n"
+                        f"Tags: {meta.get('tags', [])}\n"
+                        f"Technical Score (heuristic): {meta.get('technical_score', 'N/A')}\n"
+                        f"---\n"
+                        f"TEXT:\n{text}\n"
+                    )
+                
+                batch_prompt = "\n".join(doc_parts)
+                
+                chain = (
+                    ChatPromptTemplate.from_messages([
+                        ("system", BATCH_QUALITY_SYSTEM_PROMPT),
+                        ("human", "{input}")
+                    ])
+                    | llm.with_structured_output(BatchQualityEvaluation)
+                )
+                result = await chain.ainvoke({"input": batch_prompt})
+                return await _parse_batch_quality(result)
+            except Exception as e:
+                logger.warning(f"Batch quality evaluation failed (batch of {len(batch)}): {e}")
+                # Fallback: return None for all docs in this batch
+                return [BatchQualityResult(
+                    doc_id=doc.get("metadata", {}).get("content_hash", f"unknown_{i}"),
+                    quality_score=1,
+                    action=QualityAction.SKIP,
+                    reason=f"Batch evaluation failed: {e}",
+                ) for i, doc in enumerate(batch)]
+            finally:
+                batch_bar.update(1)
+    
+    logger.info(f"  Quality phase: {len(docs)} docs → {len(batches)} batches (batch_size={batch_size}, concurrency={max_concurrent})")
+    
+    try:
+        # Process all batches in parallel
+        batch_results = await asyncio.gather(*[process_batch(b) for b in batches])
+    finally:
+        batch_bar.close()
+    
+    # Flatten results and map back to QualityEvaluation
+    for batch_result in batch_results:
+        for br in batch_result:
+            all_results.append(QualityEvaluation(
+                quality_score=br.quality_score,
+                action=br.action,
+                reason=br.reason,
+                version_tag=br.version_tag,
+                enriched_text=br.enriched_text,
+            ))
+    
+    return all_results
+
+
+async def run_batch_metadata_extraction(
+    llm: ChatOpenAI,
+    docs: List[Dict[str, Any]],
+    batch_size: int = 12,
+    max_concurrent: int = 8,
+) -> List[MetadataExtraction]:
+    """
+    Extract metadata from multiple documents in batches.
+    
+    Chunks docs into batches, sends each batch to LLM in parallel,
+    then returns flat list of MetadataExtraction results.
+    """
+    semaphore = asyncio.Semaphore(max_concurrent)
+    batches = [docs[i:i + batch_size] for i in range(0, len(docs), batch_size)]
+    batch_bar = make_phase_bar(
+        len(batches),
+        f"Phase 3/4: Metadata batches ({len(docs)} docs)",
+    )
+    
+    async def process_batch(batch: List[Dict[str, Any]]) -> List[BatchMetadataResult]:
+        async with semaphore:
+            try:
+                doc_parts = []
+                for i, doc in enumerate(batch):
+                    meta = doc.get("metadata", {})
+                    text = doc.get("text", "")[:PipelineConfig.MAX_TEXT_LENGTH]
+                    doc_parts.append(
+                        f"===DOC===DELIMITER===\n"
+                        f"[DOC {i}]\n"
+                        f"doc_id: {meta.get('content_hash', 'unknown')}\n"
+                        f"TEXT:\n{text}\n"
+                    )
+                
+                batch_prompt = "\n".join(doc_parts)
+                
+                chain = (
+                    ChatPromptTemplate.from_messages([
+                        ("system", BATCH_METADATA_SYSTEM_PROMPT),
+                        ("human", "{input}")
+                    ])
+                    | llm.with_structured_output(BatchMetadataExtraction)
+                )
+                result = await chain.ainvoke({"input": batch_prompt})
+                return await _parse_batch_metadata(result)
+            except Exception as e:
+                logger.warning(f"Batch metadata extraction failed (batch of {len(batch)}): {e}")
+                return [BatchMetadataResult(
+                    doc_id=doc.get("metadata", {}).get("content_hash", f"unknown_{i}"),
+                    content_type="theory",
+                    vendor=None,
+                    technology=[],
+                    problem_summary=None,
+                    context_summary=None,
+                    code_block=None,
+                    has_syntax_errors=False,
+                ) for i, doc in enumerate(batch)]
+            finally:
+                batch_bar.update(1)
+    
+    logger.info(f"  Metadata phase: {len(docs)} docs → {len(batches)} batches (batch_size={batch_size}, concurrency={max_concurrent})")
+    
+    try:
+        batch_results = await asyncio.gather(*[process_batch(b) for b in batches])
+    finally:
+        batch_bar.close()
+    
+    all_results = []
+    for batch_result in batch_results:
+        for br in batch_result:
+            all_results.append(MetadataExtraction(
+                content_type=br.content_type,
+                vendor=br.vendor,
+                technology=br.technology,
+                problem_summary=br.problem_summary,
+                context_summary=br.context_summary,
+                code_block=br.code_block,
+                has_syntax_errors=br.has_syntax_errors,
+            ))
+    
+    return all_results
+
+
+async def run_batch_qa_reformulation(
+    llm: ChatOpenAI,
+    docs: List[Dict[str, Any]],
+    batch_size: int = 5,
+    max_concurrent: int = 8,
+) -> List[Optional[str]]:
+    """
+    Reformulate Q&A content for multiple documents in batches.
+    
+    Chunks docs into batches, sends each batch to LLM in parallel,
+    then returns flat list of reformulated texts.
+    """
+    semaphore = asyncio.Semaphore(max_concurrent)
+    batches = [docs[i:i + batch_size] for i in range(0, len(docs), batch_size)]
+    batch_bar = make_phase_bar(
+        len(batches),
+        f"Phase 4/4: Reformulation batches ({len(docs)} docs)",
+    )
+    
+    async def process_batch(batch: List[Dict[str, Any]]) -> List[BatchReformulationResult]:
+        async with semaphore:
+            try:
+                doc_parts = []
+                for i, doc in enumerate(batch):
+                    meta = doc.get("metadata", {})
+                    text = doc.get("text", "")[:PipelineConfig.MAX_TEXT_LENGTH]
+                    doc_parts.append(
+                        f"===DOC===DELIMITER===\n"
+                        f"[DOC {i}]\n"
+                        f"doc_id: {meta.get('content_hash', 'unknown')}\n"
+                        f"TEXT:\n{text}\n"
+                    )
+                
+                batch_prompt = "\n".join(doc_parts)
+                
+                chain = (
+                    ChatPromptTemplate.from_messages([
+                        ("system", BATCH_REFORMULATION_SYSTEM_PROMPT),
+                        ("human", "{input}")
+                    ])
+                    | llm.with_structured_output(BatchQaReformulation)
+                )
+                result = await chain.ainvoke({"input": batch_prompt})
+                return await _parse_batch_reformulation(result)
+            except Exception as e:
+                logger.warning(f"Batch reformulation failed (batch of {len(batch)}): {e}")
+                return [BatchReformulationResult(
+                    doc_id=doc.get("metadata", {}).get("content_hash", f"unknown_{i}"),
+                    reformulated_text=None,
+                ) for i, doc in enumerate(batch)]
+            finally:
+                batch_bar.update(1)
+    
+    logger.info(f"  Reformulation phase: {len(docs)} docs → {len(batches)} batches (batch_size={batch_size}, concurrency={max_concurrent})")
+    
+    try:
+        batch_results = await asyncio.gather(*[process_batch(b) for b in batches])
+    finally:
+        batch_bar.close()
+    
+    results = []
+    for batch_result in batch_results:
+        for br in batch_result:
+            results.append(br.reformulated_text)
+    
+    return results
+
+
+# ──────────────────────────────────────────────────────────
 # SINGLE DOCUMENT PROCESSOR
 # ──────────────────────────────────────────────────────────
 async def process_single_document(
@@ -737,6 +1271,31 @@ async def process_single_document(
         f"Tech: {', '.join(meta_extract.technology[:3]) or 'N/A'}"
     )
     
+    # ══════════════════════════════════════════════════════
+    # PHASE 3.5: Q&A REFORMULATION (StackExchange only)
+    # ══════════════════════════════════════════════════════
+    final_metadata = normalized_metadata.copy()
+    final_text = normalized_doc.get("text_enriched") or normalized_doc.get("text")
+    
+    if normalized_metadata.get("source_type") == "stackexchange":
+        logger.debug("  🔧 Running Q&A reformulation...")
+        reformulated = await run_qa_reformulation(llm, normalized_doc)
+        
+        if reformulated:
+            logger.debug("  ✅ Q&A reformulated successfully")
+            final_text = reformulated
+            final_metadata["text_was_reformulated"] = True
+        else:
+            logger.debug("  ⚠️ Reformulation failed, using original text")
+            final_metadata["text_was_reformulated"] = False
+    else:
+        # Non-SE docs: use enriched or original text
+        if quality.action == QualityAction.ENRICH and quality.enriched_text:
+            final_text = quality.enriched_text
+            final_metadata["text_was_enriched"] = True
+        else:
+            final_metadata["text_was_enriched"] = False
+    
     # Generate context summary if not already present
     if not meta_extract.context_summary:
         doc_title = doc.get("metadata", {}).get("title", "Unknown")
@@ -759,11 +1318,9 @@ Return only the summary text, nothing else."""
         except Exception:
             meta_extract.context_summary = f"Document about {meta_extract.content_type} content"
     
-    # ══════════════════════════════════════════════════════
+      # ══════════════════════════════════════════════════════
     # BUILD FINAL DOCUMENT
     # ══════════════════════════════════════════════════════
-    final_metadata = normalized_metadata.copy()
-    
     # Add LLM evaluation metadata
     final_metadata.update({
         "llm_quality_score": quality.quality_score,
@@ -790,15 +1347,6 @@ Return only the summary text, nothing else."""
     # Add code block if extracted
     if meta_extract.code_block:
         final_metadata["code_block"] = meta_extract.code_block
-    
-    # Determine final text (use enriched if available, else original)
-    if quality.action == QualityAction.ENRICH and quality.enriched_text:
-        final_text = quality.enriched_text
-        final_metadata["text_was_enriched"] = True
-    else:
-        # Prefer existing enriched text from scraper, else raw text
-        final_text = normalized_doc.get("text_enriched") or normalized_doc.get("text")
-        final_metadata["text_was_enriched"] = False
     
     # Construct final document
     final_doc = {
@@ -855,7 +1403,8 @@ def build_pipeline_graph(config: Dict[str, Any]) -> StateGraph:
     
     # ── Node: Process All Documents ──
     async def process_documents(state: PipelineState) -> PipelineState:
-        """Process all documents through validation → quality → enrichment pipeline."""
+        """Process all documents through phase-based parallel pipeline:
+        quality → metadata → reformulation → final build."""
         docs = state["documents"]
         
         if not docs:
@@ -874,37 +1423,41 @@ def build_pipeline_graph(config: Dict[str, Any]) -> StateGraph:
             timeout=config.get("timeout"),
         )
         
-        # Semaphore for rate limiting concurrent LLM calls
+        # Phase-based concurrency (higher than per-doc since batches are more efficient)
         max_concurrent = config.get("max_concurrent", PipelineConfig.MAX_CONCURRENT_LLM_CALLS)
-        semaphore = asyncio.Semaphore(max_concurrent)
+        min_quality_score = config.get("min_quality_score") or PipelineConfig.MIN_QUALITY_SCORE
         
-        # Split StackExchange Q&A threads into individual Q&A pairs
+        # ── Pre-processing: Q&A splitting & dedup (no LLM) ──
         logger.info("📂 Splitting StackExchange Q&A threads into Q&A pairs...")
         expanded_docs = []
         qa_split_count = 0
         qa_filtered_count = 0
-        for doc in docs:
-            metadata = doc.get("metadata", {})
-            if metadata.get("source_type") == "stackexchange_qa":
-                pairs = split_qa_pairs(doc)
-                if pairs:
-                    expanded_docs.extend(pairs)
-                    qa_split_count += len(pairs)
-                    if len(pairs) == 1 and pairs[0] is doc:
-                        pass  # not actually split, just passed through
+        preprocess_bar = make_phase_bar(len(docs), "Preprocessing: Q&A split")
+        try:
+            for doc in docs:
+                metadata = doc.get("metadata", {})
+                if metadata.get("source_type") == "stackexchange_qa":
+                    pairs = split_qa_pairs(doc)
+                    if pairs:
+                        expanded_docs.extend(pairs)
+                        qa_split_count += len(pairs)
+                        if len(pairs) == 1 and pairs[0] is doc:
+                            pass
+                        else:
+                            qa_filtered_count += 1
                     else:
-                        qa_filtered_count += 1  # original doc replaced by pairs
+                        qa_filtered_count += 1
                 else:
-                    qa_filtered_count += 1  # filtered out (no answers)
-            else:
-                expanded_docs.append(doc)
+                    expanded_docs.append(doc)
+                preprocess_bar.update(1)
+        finally:
+            preprocess_bar.close()
         
         if qa_split_count > 0 or qa_filtered_count > 0:
             logger.info(f"  Q&A split: {qa_split_count} pairs created, {qa_filtered_count} Q&A docs filtered/expanded")
             logger.info(f"  Total docs: {len(docs)} → {len(expanded_docs)}")
         docs = expanded_docs
         
-        # Near-duplicate detection using MinHash LSH
         logger.info(f"🔍 Running near-duplicate detection (MinHash LSH, threshold={PipelineConfig.NEAR_DUPLICATE_THRESHOLD})...")
         dup_indices = find_near_duplicate_indices(docs, threshold=PipelineConfig.NEAR_DUPLICATE_THRESHOLD)
         if dup_indices:
@@ -912,48 +1465,242 @@ def build_pipeline_graph(config: Dict[str, Any]) -> StateGraph:
             docs = [doc for i, doc in enumerate(docs) if i not in dup_indices]
             logger.info(f"📄 {len(docs)} documents remaining after dedup")
         
-        # Execute all document processing concurrently (with semaphore limit)
-        total = len(docs)
-        logger.info(f"🔄 Processing {total} documents (max {max_concurrent} concurrent)...")
+        # ── Phase 1: Validation + Normalization (no LLM, sequential) ──
+        logger.info(f"📋 Phase 1/4: Validating & normalizing {len(docs)} documents...")
+        validated_docs = []
+        validation_bar = make_phase_bar(len(docs), "Phase 1/4: Validation")
+        try:
+            for idx, doc in enumerate(docs):
+                passed, reason = validate_document_integrity(doc)
+                if not passed:
+                    failed.append({
+                        "original_doc": doc,
+                        "processing_error": f"VALIDATION: {reason}",
+                        "phase": "validation",
+                        "content_hash": doc.get("metadata", {}).get("content_hash", f"doc_{idx}"),
+                    })
+                    validation_bar.update(1)
+                    continue
+                normalized_metadata = normalize_metadata(doc)
+                normalized_doc = {
+                    "text": doc.get("text", ""),
+                    "metadata": normalized_metadata,
+                }
+                if "code_snippets" in doc:
+                    normalized_doc["code_snippets"] = doc["code_snippets"]
+                if "text_enriched" in doc:
+                    normalized_doc["text_enriched"] = doc["text_enriched"]
+                validated_docs.append(normalized_doc)
+                validation_bar.update(1)
+        finally:
+            validation_bar.close()
         
-        # Create progress tracker and bar
-        tracker = ProgressTracker(total, desc=f"Processing ({max_concurrent}x)")
+        logger.info(f"  ✅ {len(validated_docs)}/{len(docs)} documents passed validation")
+        
+        if not validated_docs:
+            logger.warning("No documents passed validation")
+            state["processed_docs"] = []
+            state["failed_docs"] = failed
+            state["stats"]["processed_count"] = 0
+            state["stats"]["failed_count"] = len(failed)
+            return state
+        
+        # ── Phase 2: Batch Quality Evaluation ──
+        logger.info(f"⚡ Phase 2/4: Quality evaluation ({len(validated_docs)} docs)...")
+        quality_results = await run_batch_quality_evaluation(
+            llm, validated_docs,
+            batch_size=15,
+            max_concurrent=max_concurrent,
+        )
+        
+        # Filter by quality results
+        quality_passed = []
+        quality_skipped = 0
+        quality_below_threshold = 0
+        quality_failed = 0
+        
+        for idx, (doc, quality) in enumerate(zip(validated_docs, quality_results)):
+            if quality is None:
+                quality_failed += 1
+                failed.append({
+                    "original_doc": doc,
+                    "processing_error": "LLM quality evaluation returned None",
+                    "phase": "quality_evaluation",
+                    "content_hash": doc.get("metadata", {}).get("content_hash", f"doc_{idx}"),
+                })
+                continue
+            
+            if quality.action == QualityAction.SKIP:
+                quality_skipped += 1
+                failed.append({
+                    "original_doc": doc,
+                    "processing_error": f"QUALITY_SKIP: {quality.reason}",
+                    "phase": "quality_evaluation",
+                    "llm_evaluation": quality.model_dump(),
+                    "content_hash": doc.get("metadata", {}).get("content_hash", f"doc_{idx}"),
+                })
+                continue
+            
+            if quality.quality_score < min_quality_score:
+                quality_below_threshold += 1
+                failed.append({
+                    "original_doc": doc,
+                    "processing_error": f"BELOW_THRESHOLD: Score {quality.quality_score} < {min_quality_score}",
+                    "phase": "quality_threshold",
+                    "llm_evaluation": quality.model_dump(),
+                    "content_hash": doc.get("metadata", {}).get("content_hash", f"doc_{idx}"),
+                })
+                continue
+            
+            quality_passed.append((doc, quality))
+        
+        logger.info(
+            f"  Quality results: ✅ {len(quality_passed)} kept | "
+            f"⏭️ {quality_skipped} skipped | "
+            f"⬇️ {quality_below_threshold} below threshold | "
+            f"❌ {quality_failed} failed"
+        )
+        
+        if not quality_passed:
+            logger.warning("No documents passed quality threshold")
+            state["processed_docs"] = []
+            state["failed_docs"] = failed
+            state["stats"]["processed_count"] = 0
+            state["stats"]["failed_count"] = len(failed)
+            return state
+        
+        # ── Phase 3: Batch Metadata Extraction ──
+        logger.info(f"🏷️ Phase 3/4: Metadata extraction ({len(quality_passed)} docs)...")
+        meta_docs = [doc for doc, _ in quality_passed]
+        meta_results = await run_batch_metadata_extraction(
+            llm, meta_docs,
+            batch_size=12,
+            max_concurrent=max_concurrent,
+        )
+        
+        # Separate SE docs for reformulation
+        se_docs = []
+        se_indices = []
+        for idx, (doc, quality) in enumerate(quality_passed):
+            if doc.get("metadata", {}).get("source_type") == "stackexchange":
+                se_docs.append(doc)
+                se_indices.append(idx)
+        
+        logger.info(f"  StackExchange docs for reformulation: {len(se_docs)}")
+        
+        # ── Phase 4: Batch Q&A Reformulation (SE docs only) ──
+        reform_texts = {}  # idx -> reformulated_text
+        if se_docs:
+            logger.info(f"🔧 Phase 4/4: Q&A reformulation ({len(se_docs)} docs)...")
+            reform_results = await run_batch_qa_reformulation(
+                llm, se_docs,
+                batch_size=5,
+                max_concurrent=max_concurrent,
+            )
+            for idx, reform_text in zip(se_indices, reform_results):
+                reform_texts[idx] = reform_text
+        
+        # ── Build Final Documents ──
+        logger.info(f"📦 Building {len(quality_passed)} final documents...")
+        tracker = ProgressTracker(len(quality_passed), desc="Building")
         pbar = tracker.bar()
         
-        async def process_with_limit(doc: Dict, idx: int):
-            async with semaphore:
-                result = await process_single_document(
-                    doc=doc,
-                    llm=llm,
-                    doc_idx=idx,
-                    min_quality_score=config.get("min_quality_score")
-                )
-                # Update progress: kept or failed
-                final_doc, failed_doc = result
-                status = "kept" if final_doc else "failed"
-                tracker.update(pbar, status)
-                return result
-        
-        tasks = [process_with_limit(doc, idx) for idx, doc in enumerate(docs)]
-        results = await asyncio.gather(*tasks, return_exceptions=True)
-        
-        # Collect results
-        for idx, result in enumerate(results):
-            if isinstance(result, Exception):
-                logger.error(f"  💥 Exception processing doc {idx}: {result}")
-                failed.append({
-                    "original_doc": docs[idx],
-                    "processing_error": f"EXCEPTION: {str(result)}",
-                    "phase": "unknown",
-                    "content_hash": docs[idx].get("metadata", {}).get("content_hash", f"doc_{idx}"),
-                })
-                tracker.update(pbar, "failed")
+        for idx, (doc, quality) in enumerate(quality_passed):
+            if idx < len(meta_results):
+                meta_extract = meta_results[idx]
             else:
-                final_doc, failed_doc = result
-                if final_doc:
-                    processed.append(final_doc)
-                if failed_doc:
-                    failed.append(failed_doc)
+                logger.warning(
+                    f"Metadata batch returned {len(meta_results)} results for {len(quality_passed)} docs; "
+                    f"using defaults for doc index {idx}"
+                )
+                meta_extract = MetadataExtraction(
+                    content_type="theory",
+                    vendor=None,
+                    technology=[],
+                    problem_summary=None,
+                    context_summary=None,
+                    code_block=None,
+                    has_syntax_errors=False,
+                )
+            if meta_extract is None:
+                meta_extract = MetadataExtraction(
+                    content_type="theory", vendor=None, technology=[],
+                    problem_summary=None, code_block=None, has_syntax_errors=False,
+                )
+            
+            normalized_metadata = doc["metadata"]
+            final_metadata = normalized_metadata.copy()
+            final_text = doc.get("text_enriched") or doc.get("text")
+            
+            # Apply reformulation for SE docs
+            if idx in reform_texts and reform_texts[idx]:
+                final_text = reform_texts[idx]
+                final_metadata["text_was_reformulated"] = True
+            elif doc.get("metadata", {}).get("source_type") == "stackexchange":
+                final_metadata["text_was_reformulated"] = False
+            
+            # Apply enriched text if available
+            if quality.action == QualityAction.ENRICH and quality.enriched_text:
+                if doc.get("metadata", {}).get("source_type") != "stackexchange":
+                    final_text = quality.enriched_text
+                    final_metadata["text_was_enriched"] = True
+                else:
+                    final_metadata["text_was_enriched"] = False
+            else:
+                if doc.get("metadata", {}).get("source_type") != "stackexchange":
+                    final_metadata["text_was_enriched"] = False
+            
+            # Generate context summary if needed
+            if not meta_extract.context_summary:
+                doc_title = doc.get("metadata", {}).get("title", "Unknown")
+                summary_prompt = f"""Summarize this document's topic and scope in exactly 1-2 sentences for retrieval context.
+Title: {doc_title}
+Content type: {meta_extract.content_type}
+Tags: {', '.join(meta_extract.technology[:5])}
+
+Return only the summary text, nothing else."""
+                try:
+                    summary_chain = (
+                        ChatPromptTemplate.from_messages([
+                            ("system", "You are a technical documentation assistant. Provide concise summaries."),
+                            ("human", summary_prompt)
+                        ])
+                        | llm
+                    )
+                    summary_result = await summary_chain.ainvoke({"input": ""})
+                    meta_extract.context_summary = summary_result.content.strip()
+                except Exception:
+                    meta_extract.context_summary = f"Document about {meta_extract.content_type} content"
+            
+            # Build metadata
+            final_metadata.update({
+                "llm_quality_score": quality.quality_score,
+                "llm_action": quality.action.value,
+                "llm_evaluation_reason": quality.reason,
+                "llm_verified": quality.action == QualityAction.KEEP,
+                "content_type": meta_extract.content_type,
+                "vendor": meta_extract.vendor,
+                "technology": meta_extract.technology,
+                "problem_summary": meta_extract.problem_summary,
+                "context_summary": meta_extract.context_summary,
+                "has_syntax_errors": meta_extract.has_syntax_errors,
+                "status": "needs_review" if quality.action == QualityAction.ENRICH else "verified",
+            })
+            
+            if quality.version_tag:
+                final_metadata["version_tag"] = quality.version_tag
+            if meta_extract.code_block:
+                final_metadata["code_block"] = meta_extract.code_block
+            
+            final_doc = {
+                "text": final_text,
+                "metadata": final_metadata,
+            }
+            if doc.get("code_snippets"):
+                final_doc["code_snippets"] = doc["code_snippets"]
+            
+            processed.append(final_doc)
+            tracker.update(pbar, "kept")
         
         pbar.close()
         
