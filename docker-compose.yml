@@ -106,9 +106,9 @@ services:
       - LOCAL_OPENAI_API_KEY=${LOCAL_OPENAI_API_KEY:-}
       - TOKEN_FACTORY_API_KEY=${TOKEN_FACTORY_API_KEY:-}
       - ACTION_REDIS_URL=redis://qosentry-redis:6379
-      - MININET_API_URL=http://192.168.249.132:8000
+      - MININET_API_URL=http://192.168.1.114:8000
     extra_hosts:
-      - "mininet-vm:192.168.249.132"
+      - "mininet-vm:192.168.1.114"
 
     volumes:
       - ./ai-services/agent/app:/app

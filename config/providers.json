@@ -1,8 +1,8 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$comment": "Centralized provider configuration for QoS-Buddy. Add new providers here - no code changes needed!",
-  "default_provider": "groq",
-  "default_model": "qwen/qwen3-32b",
+  "default_provider": "local-openai",
+  "default_model": "qwen3.5-9b-no-think",
   "providers": {
     "groq": {
       "display_name": "Groq",

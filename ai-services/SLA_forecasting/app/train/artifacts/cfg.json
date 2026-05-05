@@ -1,0 +1,62 @@
+{
+  "window_size": 30,
+  "horizon": 3,
+  "train_frac": 0.8,
+  "val_frac": 0.1,
+  "roll_windows": [
+    5,
+    10
+  ],
+  "lag_steps": [
+    1,
+    2,
+    3,
+    5
+  ],
+  "feature_filter_enabled": true,
+  "variance_threshold": 0.0001,
+  "corr_threshold": 0.8,
+  "min_features_to_keep": 12,
+  "drop_low_impact_features_from_prev_run": true,
+  "low_impact_feature_file": "artifacts/low_impact_feature_candidates.json",
+  "batch_size": 256,
+  "max_epochs": 120,
+  "label_smoothing": 0.1,
+  "warmup_epochs": 5,
+  "minority_boost_classes": [
+    "CALL_DROP",
+    "CAPACITY_EXHAUSTED"
+  ],
+  "minority_boost": 1.5,
+  "balance_train_windows": true,
+  "train_balance_max_ratio": 2,
+  "downsample_strategy": "stratified_by_run_segment",
+  "downsample_seed": 42,
+  "lr": 0.0005,
+  "hidden_size": 64,
+  "num_layers": 1,
+  "dropout": 0.35,
+  "input_dropout": 0.2,
+  "lstm_out_dropout": 0.35,
+  "classifier_hidden_mult": 0.75,
+  "tcn_channels": [
+    32,
+    64,
+    128
+  ],
+  "patience": 20,
+  "focal_gamma": 1.5,
+  "clip_grad": 1.0,
+  "weight_decay": 0.001,
+  "importance_num_repeats": 7,
+  "importance_max_features": null,
+  "importance_drop_threshold": 0.0,
+  "optuna_enabled": true,
+  "optuna_trials": 50,
+  "optuna_timeout_sec": 1800,
+  "optuna_max_epochs": 15,
+  "optuna_patience": 5,
+  "optuna_train_subset_frac": 0.2,
+  "optuna_gap_lambda": 0.3,
+  "optuna_gap_tolerance": 0.03
+}
