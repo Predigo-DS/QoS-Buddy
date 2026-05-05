@@ -608,16 +608,6 @@ export default function OptimizationPage() {
   const isMockMode  = result?.mock_mode ?? true
   const avg30       = (result?.telemetry_summary as { avg_metrics?: Record<string, number> })?.avg_metrics ?? {}
 
-  const slaPct = (() => {
-    if (Array.isArray(sla.predictions)) {
-      const preds = sla.predictions as { sla_alert: boolean }[]
-      const ok = preds.filter(p => !p.sla_alert).length
-      return preds.length ? (ok / preds.length) * 100 : 92
-    }
-    const prob = Number(sla.sla_violation_probability ?? 0.08)
-    return (1 - prob) * 100
-  })()
-
   const ports: PortMetric[] = (() => {
     // When telemetryRows is available (backend /latest endpoint working), use real rows
     if (telemetryRows.length > 0) {
@@ -669,10 +659,19 @@ export default function OptimizationPage() {
   const rawAvail     = recentRows.length > 0 ? avg(recentRows, 'availability')     : (avg30.availability ?? 99.9)
   const currentAvail = rawAvail <= 1 && rawAvail >= 0 ? rawAvail * 100 : rawAvail
 
+  // SLA compliance calculated from measured metrics (not model prediction)
+  const slaPct = (() => {
+    const mosOk = currentMos >= 3.5 ? 100 : currentMos > 0 ? Math.max(0, (currentMos / 4.4) * 100) : 50
+    const plrOk = currentPlr < 0.05 ? 100 : currentPlr < 0.1 ? 70 : 30
+    const delayOk = currentDelay < 100 ? 100 : currentDelay < 200 ? 70 : 30
+    return Math.round((mosOk * 0.4 + plrOk * 0.35 + delayOk * 0.25) * 10) / 10
+  })()
+
   // Compute risk from real metrics — override mock agent "always medium"
   const computedRisk: string = (() => {
     const critPLR     = currentPlr > 0.20                  // >20% packet loss → critical
     const highPLR     = currentPlr > 0.08                  // >8%  packet loss → high
+    const elevatedPLR = currentPlr > 0.05                  // >5%  packet loss → medium (elevated threshold)
     const badMOS      = currentMos < 2.5 && currentMos > 0 // MOS < 2.5 → very bad
     const degradedMOS = currentMos < 3.0 && currentMos > 0 // MOS < 3.0 → degraded
     const highLatency = currentDelay > 150                  // >150ms
@@ -682,7 +681,7 @@ export default function OptimizationPage() {
 
     if (critPLR || critLatency || critAvail || badMOS)           return 'critical'
     if (highPLR || highLatency || lowAvail || degradedMOS)       return 'high'
-    if (currentPlr > 0.03 || currentDelay > 80 || currentMos < 3.5) return 'medium'
+    if (elevatedPLR || currentDelay > 80 || currentMos < 3.0)    return 'medium'
     return 'low'
   })()
 
@@ -694,7 +693,7 @@ export default function OptimizationPage() {
 
       {/* ── Top bar ────────────────────────────────────────────────────────── */}
       <header className="sticky top-0 z-30 bg-background/80 backdrop-blur border-b border-border px-6 py-3 flex items-center gap-4">
-        <Link href="/inference" className="text-muted hover:text-white transition-colors">
+        <Link href="/dashboard" className="text-muted hover:text-white transition-colors">
           <ArrowLeft className="w-5 h-5" />
         </Link>
         <div className="flex items-center gap-2">
@@ -797,8 +796,8 @@ export default function OptimizationPage() {
                 icon={Activity}
                 label="Packet Loss Rate"
                 value={`${(currentPlr * 100).toFixed(2)}%`}
-                sub={currentPlr < 0.02 ? 'Optimal' : 'Elevated — investigate'}
-                color={currentPlr < 0.02 ? 'text-emerald-400' : 'text-red-400'}
+                sub={currentPlr < 0.05 ? 'Optimal' : 'Elevated — investigate'}
+                color={currentPlr < 0.05 ? 'text-emerald-400' : 'text-red-400'}
               />
               <KpiCard
                 icon={Clock}

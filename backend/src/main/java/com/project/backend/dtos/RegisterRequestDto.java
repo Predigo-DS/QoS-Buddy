@@ -20,4 +20,7 @@ public class RegisterRequestDto {
 
     @NotBlank
     private String password;
+
+    @NotBlank
+    private String profileRole;
 }

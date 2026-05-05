@@ -15,12 +15,18 @@ from pydantic import BaseModel, Field
 from graph import build_graph
 from incident_graph import build_incident_graph, available_placeholder_tools
 from optimization_graph import build_optimization_graph
+from logging_service import (
+    _ensure_logs_table,
+    log_agent_action,
+    log_alert,
+    get_recent_logs_for_rag,
+    format_rag_log_context,
+)
+from db import CHECKPOINT_DB_URI, get_db_connection
 from dotenv import load_dotenv
 from config import PROVIDERS, DEFAULT_PROVIDER, LLM_MODEL, FULL_CONFIG
 
 load_dotenv()
-
-CHECKPOINT_DB_URI = os.getenv("CHECKPOINT_DB_URI", "").strip()
 
 
 def _read_models_cache_ttl_seconds() -> int:
@@ -41,6 +47,7 @@ class ChatRequest(BaseModel):
     model: str | None = None
     provider: str | None = None
     base_url: str | None = None
+    user_role: str | None = "technical"
     search_type: str | None = "hybrid"
     rrf_dense_weight: float | None = 0.7
     min_relevance_score: float | None = 0.7
@@ -116,21 +123,11 @@ async def _run_setup_maybe_async(checkpointer):
         await result
 
 
-async def _get_db_connection() -> AsyncConnection:
-    if not CHECKPOINT_DB_URI:
-        raise RuntimeError("CHECKPOINT_DB_URI is not configured")
-    return await AsyncConnection.connect(
-        CHECKPOINT_DB_URI,
-        autocommit=True,
-        row_factory=dict_row,
-    )
-
-
 async def _ensure_threads_table():
     if not CHECKPOINT_DB_URI:
         return
 
-    conn = await _get_db_connection()
+    conn = await get_db_connection()
     async with conn:
         await conn.execute(
             """
@@ -147,7 +144,7 @@ async def _upsert_thread_meta(thread_id: str, preview: str):
     if not CHECKPOINT_DB_URI:
         return
 
-    conn = await _get_db_connection()
+    conn = await get_db_connection()
     async with conn:
         await conn.execute(
             """
@@ -166,7 +163,7 @@ async def _delete_thread_meta(thread_id: str):
     if not CHECKPOINT_DB_URI:
         return
 
-    conn = await _get_db_connection()
+    conn = await get_db_connection()
     async with conn:
         await conn.execute(
             "DELETE FROM chat_threads WHERE thread_id = %s", (thread_id,)
@@ -177,7 +174,7 @@ async def _list_thread_meta(limit: int, offset: int) -> list[dict]:
     if not CHECKPOINT_DB_URI:
         return []
 
-    conn = await _get_db_connection()
+    conn = await get_db_connection()
     async with conn:
         cur = await conn.execute(
             """
@@ -423,6 +420,7 @@ async def lifespan(app: FastAPI):
         app.state.graph = build_graph(checkpointer=checkpointer)
 
         await _ensure_threads_table()
+        await _ensure_logs_table()
 
     try:
         yield
@@ -637,6 +635,7 @@ async def chat(req: ChatRequest):
                 "messages": graph_messages,
                 "model": model_name,
                 "base_url": resolved_base_url,
+                "user_role": req.user_role or "technical",
             },
             config={
                 "configurable": {
@@ -649,6 +648,7 @@ async def chat(req: ChatRequest):
                     "rrf_dense_weight": req.rrf_dense_weight or 0.7,
                     "min_relevance_score": req.min_relevance_score or 0.7,
                     "enable_query_rewriting": req.enable_query_rewriting or True,
+                    "user_role": req.user_role or "technical",
                 }
             },
         )
@@ -700,6 +700,33 @@ async def optimization_respond(req: OptimizationRequest):
 
         decision = result.get("decision_output") or {}
         tool_trace = result.get("tool_trace") or []
+
+        # Log the optimization result
+        await log_agent_action(
+            avg_metrics=req.avg_30s,
+            tool_trace=tool_trace,
+            decision=decision,
+            anomaly_result=req.anomaly_result,
+            sla_result=req.sla_result,
+        )
+
+        # Log alerts if anomaly or SLA violations detected
+        anomaly = req.anomaly_result or {}
+        sla = req.sla_result or {}
+        if anomaly.get("anomaly_detected", False) or anomaly.get("anomaly_windows", 0) > 0:
+            await log_alert(
+                alert_type="anomaly_detected",
+                segment=anomaly.get("segment", "unknown"),
+                severity="high" if anomaly.get("anomaly_score", 0) > 0.8 else "medium",
+                details=anomaly,
+            )
+        if sla.get("sla_alert", False) or sla.get("alert_count", 0) > 0:
+            await log_alert(
+                alert_type="sla_violation_forecast",
+                segment=sla.get("segment", "unknown"),
+                severity="critical" if sla.get("alert_rate", 0) > 0.7 else "high",
+                details=sla,
+            )
 
         return OptimizationResponse(
             decision=decision,

@@ -336,18 +336,42 @@ def tool_execution_node(state: OptimizationState) -> dict:
     return {"messages": new_messages, "tool_trace": tool_trace}
 
 
+def _compute_risk_from_metrics(avg: dict) -> str:
+    """Compute risk level from actual telemetry metrics instead of defaulting to 'medium'."""
+    plr = avg.get("plr", 0)
+    delay = avg.get("e2e_delay_ms", 0)
+    mos = avg.get("mos_voice", 4.0)
+    jitter = avg.get("jitter_ms", 0)
+
+    # Critical: severe degradation
+    if plr > 0.20 or delay > 300 or (mos > 0 and mos < 2.0):
+        return "critical"
+    # High: significant degradation
+    if plr > 0.08 or delay > 150 or (mos > 0 and mos < 2.5) or jitter > 30:
+        return "high"
+    # Medium: moderate degradation (PLR > 5% is the elevated threshold)
+    if plr > 0.05 or delay > 80 or (mos > 0 and mos < 3.0):
+        return "medium"
+    return "low"
+
+
 def final_decision_node(state: OptimizationState) -> dict:
+    avg_metrics = state.get("avg_30s", {})
+
     # First: check if decision_summary_tool was called — it contains the structured decision
     tool_trace = state.get("tool_trace") or []
     for entry in reversed(tool_trace):
         if entry.get("tool") == "decision_summary_tool":
             result = entry.get("result", {})
             if isinstance(result, dict) and "decision_summary" in result:
+                # Use LLM's risk_level if provided, otherwise compute from metrics
+                llm_risk = result.get("risk_level")
+                risk_level = str(llm_risk) if llm_risk and llm_risk != "medium" else _compute_risk_from_metrics(avg_metrics)
                 return {"decision_output": {
                     "decision_summary": result.get("decision_summary", ""),
                     "recommended_actions": result.get("recommended_actions", []),
                     "confidence": float(result.get("confidence", 0.5)),
-                    "risk_level": str(result.get("risk_level", "medium")),
+                    "risk_level": risk_level,
                 }}
 
     # Fallback: extract from last AI message text
@@ -358,11 +382,14 @@ def final_decision_node(state: OptimizationState) -> dict:
             last_ai = msg.content
             break
 
+    # Compute risk from actual metrics instead of defaulting to "medium"
+    computed_risk = _compute_risk_from_metrics(avg_metrics)
+
     decision = {
         "decision_summary": last_ai or "No decision produced.",
         "recommended_actions": [],
         "confidence": 0.5,
-        "risk_level": "medium",
+        "risk_level": computed_risk,
     }
     if last_ai:
         try:
@@ -371,6 +398,9 @@ def final_decision_node(state: OptimizationState) -> dict:
             if start >= 0 and end > start:
                 parsed = json.loads(last_ai[start:end])
                 decision.update(parsed)
+                # Only override computed risk if LLM explicitly returned a valid risk level
+                if "risk_level" in parsed and parsed["risk_level"] in ("low", "medium", "high", "critical"):
+                    decision["risk_level"] = parsed["risk_level"]
         except Exception:
             pass
 

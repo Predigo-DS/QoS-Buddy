@@ -8,6 +8,7 @@ import { useState, FormEvent } from "react";
 import { Button } from "../ui/button";
 import { Checkpoint, Message } from "@langchain/langgraph-sdk";
 import { AssistantMessage, AssistantMessageLoading } from "./messages/ai";
+import { getProfileRole } from "@/lib/auth";
 import { HumanMessage } from "./messages/human";
 import {
   DO_NOT_RENDER_ID_PREFIX,
@@ -412,6 +413,10 @@ export function Thread() {
   const [rrfSparseWeight, setRrfSparseWeight] = useState(0.2);
   const [minRelevance, setMinRelevance] = useState(0.4);
   const [enableReranking, setEnableReranking] = useState(true);
+  const [chatRole, setChatRole] = useState<"technical" | "executive">(() => {
+    const stored = getProfileRole();
+    return stored === 'EXECUTIVE' ? 'executive' : 'technical';
+});
   // Query rewriting always ON - removed toggle
   const isLargeScreen = useMediaQuery("(min-width: 1024px)");
 
@@ -614,6 +619,7 @@ stream.submit(
             ? {
                 configurable: {
                   ...routingConfig,
+                  user_role: chatRole,
                   search_type: searchType,
                   rrf_dense_weight: Math.max(0, Math.min(1, 1 - rrfSparseWeight)),
                   min_relevance_score: minRelevance,
@@ -769,22 +775,39 @@ stream.submit(
                 </motion.button>
               </div>
 
-              <div className="flex items-center gap-4">
-<TooltipIconButton
-                   size="lg"
-                   className="p-4"
-                   tooltip="New thread"
-                   variant="ghost"
-                   onClick={handleNewThread}
-                   disabled={isCreatingThread}
-                 >
-                   {isCreatingThread ? (
-                     <LoaderCircle className="size-5 animate-spin" />
-                   ) : (
-                     <SquarePen className="size-5" />
-                   )}
-                 </TooltipIconButton>
-              </div>
+             <div className="flex items-center gap-2">
+                {/* Role toggle */}
+                <div className="flex items-center gap-1 bg-surface rounded-lg p-0.5 border border-border">
+                  {(['executive', 'technical'] as const).map((r) => (
+                    <button
+                      key={r}
+                      onClick={() => setChatRole(r)}
+                      className={`px-3 py-1.5 rounded-md text-xs font-semibold transition-all capitalize ${
+                        chatRole === r
+                          ? 'bg-primary text-white shadow'
+                          : 'text-muted hover:text-white'
+                      }`}
+                    >
+                      {r === 'executive' ? '📊 Executive' : '⚙️ Technical'}
+                    </button>
+                  ))}
+                </div>
+
+                <TooltipIconButton
+                  size="lg"
+                  className="p-3"
+                  tooltip="New thread"
+                  variant="ghost"
+                  onClick={handleNewThread}
+                  disabled={isCreatingThread}
+                >
+                  {isCreatingThread ? (
+                    <LoaderCircle className="size-5 animate-spin" />
+                  ) : (
+                    <SquarePen className="size-5" />
+                  )}
+                </TooltipIconButton>
+               </div>
 
               <div className="from-background to-background/0 absolute inset-x-0 top-full h-5 bg-gradient-to-b" />
             </div>

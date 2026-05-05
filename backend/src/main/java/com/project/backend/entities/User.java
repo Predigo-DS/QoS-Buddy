@@ -39,9 +39,18 @@ public class User extends BaseEntity implements UserDetails {
     @Column(nullable = false)
     private Role role;
 
+    @Enumerated(EnumType.STRING)
+    @Column(nullable = false)
+    private ProfileRole profileRole;
+
     public enum Role {
         USER,
         ADMIN
+    }
+
+    public enum ProfileRole {
+        TECHNICAL,
+        EXECUTIVE
     }
 
     @Override

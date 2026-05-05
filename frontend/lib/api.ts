@@ -35,6 +35,7 @@ export interface AuthResponse {
   token: string
   username: string
   role: string
+  profileRole: string
 }
 
 export interface LoginRequest {
@@ -46,6 +47,7 @@ export interface RegisterRequest {
   username: string
   email: string
   password: string
+  profileRole: string
 }
 
 export async function loginApi(data: LoginRequest): Promise<AuthResponse> {

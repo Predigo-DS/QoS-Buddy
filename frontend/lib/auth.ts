@@ -3,6 +3,7 @@ import { jwtDecode } from 'jwt-decode'
 const TOKEN_KEY = 'qosentry_token'
 const USERNAME_KEY = 'qosentry_username'
 const ROLE_KEY = 'qosentry_role'
+const PROFILE_ROLE_KEY = 'qosentry_profile_role'
 
 interface JwtPayload {
   sub?: string
@@ -26,6 +27,7 @@ export function removeToken(): void {
     localStorage.removeItem(TOKEN_KEY)
     localStorage.removeItem(USERNAME_KEY)
     localStorage.removeItem(ROLE_KEY)
+    localStorage.removeItem(PROFILE_ROLE_KEY)
   }
 }
 
@@ -55,14 +57,22 @@ export function getUsername(): string | null {
   }
 }
 
-export function saveUserInfo(username: string, role: string): void {
+export function saveUserInfo(username: string, role: string, profileRole?: string): void {
   if (typeof window !== 'undefined') {
     localStorage.setItem(USERNAME_KEY, username)
     localStorage.setItem(ROLE_KEY, role)
+    if (profileRole) {
+      localStorage.setItem(PROFILE_ROLE_KEY, profileRole)
+    }
   }
 }
 
 export function getRole(): string | null {
   if (typeof window === 'undefined') return null
   return localStorage.getItem(ROLE_KEY)
+}
+
+export function getProfileRole(): string | null {
+  if (typeof window === 'undefined') return null
+  return localStorage.getItem(PROFILE_ROLE_KEY)
 }

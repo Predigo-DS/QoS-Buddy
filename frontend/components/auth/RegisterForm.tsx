@@ -26,6 +26,7 @@ const schema = z
       .regex(/[0-9]/, 'Must contain at least one number')
       .regex(/[^a-zA-Z0-9]/, 'Must contain at least one special character'),
     confirmPassword: z.string(),
+    profileRole: z.enum(['TECHNICAL', 'EXECUTIVE']).default('TECHNICAL'),
   })
   .refine((d) => d.password === d.confirmPassword, {
     path: ['confirmPassword'],
@@ -76,8 +77,9 @@ export default function RegisterForm() {
         username: data.username,
         email: data.email,
         password: data.password,
+        profileRole: data.profileRole,
       })
-      login(response.token, response.username, response.role)
+      login(response.token, response.username, response.role, response.profileRole)
     } catch (err) {
       if (axios.isAxiosError(err)) {
         const msg: string = err.response?.data?.message ?? err.response?.data ?? ''
@@ -279,6 +281,33 @@ export default function RegisterForm() {
                 {errors.confirmPassword.message}
               </p>
             )}
+          </div>
+
+          {/* Profile role selection */}
+          <div>
+            <label className="block text-sm font-medium text-text-main mb-2">
+              Your role
+            </label>
+            <div className="grid grid-cols-2 gap-2">
+              {(['TECHNICAL', 'EXECUTIVE'] as const).map((role) => (
+                <label
+                  key={role}
+                  className={`flex items-center justify-center gap-2 px-4 py-3 rounded-xl border cursor-pointer transition-all ${
+                    watch('profileRole') === role
+                      ? 'border-primary bg-primary/10 text-primary'
+                      : 'border-border hover:border-primary/50'
+                  }`}
+                >
+                  <input
+                    type="radio"
+                    {...register('profileRole')}
+                    value={role}
+                    className="sr-only"
+                  />
+                  {role === 'TECHNICAL' ? '⚙️' : '📊'} {role.charAt(0) + role.slice(1).toLowerCase()}
+                </label>
+              ))}
+            </div>
           </div>
 
           {/* Submit */}

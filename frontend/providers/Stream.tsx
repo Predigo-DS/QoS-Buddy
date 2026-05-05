@@ -43,6 +43,7 @@ type StreamSubmitOptions = {
         model?: string;
         provider?: string;
         base_url?: string;
+        user_role?: "technical" | "executive";
         search_type?: "hybrid" | "semantic" | "keyword";
         rrf_dense_weight?: number;
         min_relevance_score?: number;
@@ -240,6 +241,7 @@ export const StreamProvider: React.FC<{ children: ReactNode }> = ({
           model: cfg?.model,
           provider: cfg?.provider,
           base_url: cfg?.base_url,
+          user_role: cfg?.user_role || "technical",
           search_type: cfg?.search_type,
           rrf_dense_weight: cfg?.rrf_dense_weight,
           min_relevance_score: cfg?.min_relevance_score,

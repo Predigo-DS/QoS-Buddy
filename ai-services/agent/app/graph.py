@@ -15,6 +15,55 @@ load_dotenv()
 
 RAG_URL = os.getenv("RAG_SERVICE_URL", "http://rag:8001")
 
+
+# Role-based system prompts
+TECHNICAL_SYSTEM_PROMPT = """You are QoSentry, a senior network engineer specializing in Quality of Service.
+Audience: Technical staff (network engineers, DevOps, SREs).
+
+Response guidelines:
+- Use technical terminology (MOS, PLR, jitter, TC/netem, OpenFlow, DSCP, etc.)
+- Include specific metric values, thresholds, and protocol details
+- Provide actionable troubleshooting steps and configuration guidance
+- Reference RFCs, ITU-T standards, or vendor documentation where relevant
+- Be precise and detailed — the audience understands networking concepts"""
+
+EXECUTIVE_SYSTEM_PROMPT = """You are QoSentry, a network operations advisor for leadership.
+Audience: Executives and business stakeholders.
+
+Response guidelines:
+- Explain in plain language — avoid jargon or explain it briefly when necessary
+- Focus on business impact: service quality, customer experience, risk, and cost
+- Provide high-level summaries with key takeaways, not deep technical details
+- Frame issues in terms of risk levels (low/medium/high/critical) and recommended actions
+- Use analogies when helpful (e.g., "packet loss is like dropped phone calls")
+- Keep responses concise and decision-oriented"""
+
+
+def get_system_prompt(user_role: str, retrieved_context: str, log_context: str = "") -> str:
+    """Build system prompt based on user role."""
+    if user_role == "executive":
+        base = EXECUTIVE_SYSTEM_PROMPT
+    else:
+        base = TECHNICAL_SYSTEM_PROMPT
+
+    parts = [base]
+
+    if log_context:
+        parts.append(f"\n{log_context}")
+
+    parts.append(
+        f"\n\nUse the retrieved context below to answer accurately. "
+        f"If the context is insufficient, say so clearly.\n\n"
+        f"Context:\n{retrieved_context or 'No context available.'}"
+    )
+
+    parts.append(
+        "\nOnly answer questions pertaining to QoSentry, Networking, Quality of Experience/Service. "
+        "Do not answer generic or vague questions not relevant to the task at hand."
+    )
+
+    return "\n".join(parts)
+
 QUERY_REWRITE_PROMPT = """You are a query rewriter for a RAG system about Quality of Service (QoS) in networking.
 Rewrite the user's query into 2 alternative versions that might match technical documentation better.
 
@@ -138,10 +187,35 @@ class AgentState(TypedDict):
     messages: Annotated[list[BaseMessage], add_messages]
     sources: list[dict]
     context: str
+    log_context: NotRequired[str]
     model: NotRequired[str]
     base_url: NotRequired[str]
+    user_role: NotRequired[str]
     search_type: NotRequired[str]
     rewritten_queries: NotRequired[list[str]]
+    intent: NotRequired[str]
+
+
+# ── Intent classification ─────────────────────────────────────────────────────
+_GREETING_PATTERNS = [
+    r"^\s*(hi|hello|hey|howdy|greetings)\b",
+    r"^\s*(good\s+(morning|afternoon|evening|day))\b",
+    r"^\s*(what'?s\s+up|sup|yo)\b",
+    r"^\s*thanks?\s*(for\s+\w+)?\s*$",
+    r"^\s*(cheers|bye|see\s+you|take\s+care)\s*$",
+    r"^\s*(please|sorry|excuse\s+me)\s*$",
+]
+
+
+def _classify_intent(query: str) -> str:
+    """Classify message intent: greeting or technical."""
+    import re
+    lower = query.strip().lower()
+    if len(lower.split()) <= 4:
+        for pattern in _GREETING_PATTERNS:
+            if re.search(pattern, lower):
+                return "greeting"
+    return "technical"
 
 
 # ── Query Rewriting ───────────────────────────────────────────────────────────
@@ -246,16 +320,11 @@ async def generate_node(state: AgentState, config: RunnableConfig) -> AgentState
     api_key = cfg.get("api_key")
     llm = get_llm(model_name=model_name, base_url=base_url, api_key=api_key)
 
-    system = SystemMessage(
-        content=(
-            "You are QoSentry, an expert assistant on Quality of Service in networks. "
-            "Use the retrieved context below to answer accurately. "
-            "If the context is insufficient, say so clearly.\n\n"
-            f"Context:\n{state.get('context', 'No context available.')}"
-            "Only answer questions pertaining to QoSentry, Networking, Quality of Experience/Service"
-            "Do not answer generic or vague questions not relevant to the task at hand"
-        )
-    )
+    user_role = cfg.get("user_role") or state.get("user_role", "technical")
+    retrieved_context = state.get("context", "No context available.")
+    log_context = state.get("log_context", "")
+
+    system = SystemMessage(content=get_system_prompt(user_role, retrieved_context, log_context))
 
     response = await llm.ainvoke([system] + list(state["messages"]))
     sources = state.get("sources", [])
@@ -272,13 +341,49 @@ async def generate_node(state: AgentState, config: RunnableConfig) -> AgentState
     return {"messages": [ai_message]}
 
 
+# ── Log context node ──────────────────────────────────────────────────────────
+async def log_context_node(state: AgentState, config: RunnableConfig) -> AgentState:
+    """Fetch recent logs and format as context for the LLM."""
+    from logging_service import get_recent_logs_for_rag, format_rag_log_context
+    try:
+        logs = await get_recent_logs_for_rag()
+        log_ctx = format_rag_log_context(logs)
+        return {"log_context": log_ctx}
+    except Exception as e:
+        print(f"[WARN] Failed to fetch log context: {e}")
+        return {"log_context": ""}
+
+
+# ── Intent classification node ────────────────────────────────────────────────
+def classify_node(state: AgentState) -> AgentState:
+    """Classify user intent and route accordingly."""
+    last_human = next(
+        (m for m in reversed(state["messages"]) if isinstance(m, HumanMessage)), None
+    )
+    query = last_human.content if last_human else ""
+    intent = _classify_intent(query)
+    return {"intent": intent}
+
+
+def route_by_intent(state: AgentState) -> str:
+    """Route to full pipeline for technical, skip to generate for greetings."""
+    return state.get("intent", "technical")
+
+
 # ── Graph definition ──────────────────────────────────────────────────────────
 def build_graph(checkpointer=None):
     builder = StateGraph(AgentState)
+    builder.add_node("classify", classify_node)
     builder.add_node("retrieve", retrieve_node)
+    builder.add_node("fetch_logs", log_context_node)
     builder.add_node("generate", generate_node)
-    builder.set_entry_point("retrieve")
-    builder.add_edge("retrieve", "generate")
+    builder.set_entry_point("classify")
+    builder.add_conditional_edges("classify", route_by_intent, {
+        "technical": "retrieve",
+        "greeting": "generate",
+    })
+    builder.add_edge("retrieve", "fetch_logs")
+    builder.add_edge("fetch_logs", "generate")
     builder.add_edge("generate", END)
     if checkpointer is not None:
         return builder.compile(checkpointer=checkpointer)

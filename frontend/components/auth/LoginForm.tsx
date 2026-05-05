@@ -38,7 +38,7 @@ export default function LoginForm() {
     setIsSubmitting(true)
     try {
       const response = await loginApi(data)
-      login(response.token, response.username, response.role)
+      login(response.token, response.username, response.role, response.profileRole)
     } catch (err) {
       if (axios.isAxiosError(err)) {
         if (err.response?.status === 401) {

@@ -33,11 +33,19 @@ public class AuthServiceImpl implements AuthService {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Email already in use");
         }
 
+        User.ProfileRole profileRole = User.ProfileRole.TECHNICAL;
+        try {
+            profileRole = User.ProfileRole.valueOf(request.getProfileRole().toUpperCase());
+        } catch (IllegalArgumentException e) {
+            // Default to TECHNICAL if invalid value
+        }
+
         User user = User.builder()
                 .username(request.getUsername())
                 .email(request.getEmail())
                 .password(passwordEncoder.encode(request.getPassword()))
                 .role(User.Role.USER)
+                .profileRole(profileRole)
                 .build();
 
         User saved = userRepository.save(user);
@@ -47,6 +55,7 @@ public class AuthServiceImpl implements AuthService {
                 .token(token)
                 .username(saved.getUsername())
                 .role(saved.getRole().name())
+                .profileRole(saved.getProfileRole().name())
                 .build();
     }
 
@@ -64,6 +73,7 @@ public class AuthServiceImpl implements AuthService {
                 .token(token)
                 .username(user.getUsername())
                 .role(user.getRole().name())
+                .profileRole(user.getProfileRole().name())
                 .build();
     }
 }

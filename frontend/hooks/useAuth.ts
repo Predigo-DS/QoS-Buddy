@@ -19,7 +19,7 @@ interface AuthState {
 }
 
 interface UseAuthReturn extends AuthState {
-  login: (token: string, username: string, role: string) => void
+  login: (token: string, username: string, role: string, profileRole?: string) => void
   logout: () => void
 }
 
@@ -40,9 +40,9 @@ export function useAuth(): UseAuthReturn {
   }, [])
 
   const login = useCallback(
-    (token: string, username: string, role: string) => {
+    (token: string, username: string, role: string, profileRole?: string) => {
       saveToken(token)
-      saveUserInfo(username, role)
+      saveUserInfo(username, role, profileRole)
       setAuthState({ isAuthenticated: true, username, role })
       router.push('/dashboard')
     },
