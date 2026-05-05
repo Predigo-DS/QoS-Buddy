@@ -188,7 +188,7 @@ def risk_analysis_node(state: IncidentState) -> IncidentState:
     score += 40 if latency >= 150 else 25 if latency >= 100 else 0
     score += 35 if cpu >= 90 else 20 if cpu >= 75 else 0
     score += 15 if memory >= 85 else 0
-    score += 25 if packet_loss >= 2 else 10 if packet_loss >= 1 else 0
+    score += 25 if packet_loss >= 5 else 10 if packet_loss >= 3 else 0
 
     device = str(incident.get("device") or "unknown-device")
 

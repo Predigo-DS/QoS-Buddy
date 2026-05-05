@@ -169,12 +169,12 @@ You have full autonomy to choose any combination of tools that fits the situatio
 
 - throttle_link(device, interface, rate_limit_mbps)
     Restores tc/netem on a specific interface back to baseline loss.
-    Best for: LOW_THROUGHPUT on s1-eth3, CAPACITY_EXHAUSTED on congested interfaces.
+    Best for: LOW_THROUGHPUT on a single interface, or when one link is overprovisioned.
 
 - apply_qos_profile(device, profile)
     profile="voice-video-priority" : reduces loss to near-zero on all voice/video paths.
     profile="high-priority-qos"    : restores all interfaces to baseline loss values.
-    Best for: CALL_DROP, POOR_VOICE_QUALITY, general multi-interface degradation.
+    Best for: CALL_DROP, POOR_VOICE_QUALITY, or when 2+ interfaces are degraded simultaneously.
 
 - restart_interface(device, interface)
     Full netem reset on one interface back to its baseline values.
@@ -185,18 +185,30 @@ You have full autonomy to choose any combination of tools that fits the situatio
 
 - decision_summary_tool (ALWAYS call this last)
 
+== TOOL SELECTION RULES (CRITICAL) ==
+1. Identify WHICH SPECIFIC INTERFACE is degraded BEFORE choosing a tool.
+2. If only ONE interface is affected, use a TARGETED tool:
+   - High latency on one interface -> reroute_traffic
+   - High loss on one interface -> restart_interface or throttle_link
+   - Low throughput on one interface -> throttle_link
+3. Only use apply_qos_profile when 2 or more interfaces are degraded, or when the scenario is CALL_DROP/POOR_VOICE_QUALITY.
+4. Do NOT default to apply_qos_profile for single-interface issues — it is a broad hammer, not a precision tool.
+5. You may call multiple tools if different interfaces need different actions.
+
 == YOUR TASK ==
 You receive telemetry every 15-30 seconds enriched with anomaly detection and SLA forecasting results.
 Analyze the metrics freely, identify the most likely scenario, and choose the most appropriate action.
 You are not limited to one tool — use your judgment.
 
 PROCESS:
-  Step 1 -- call your chosen action tool(s), ONE at a time
-  Step 2 -- call decision_summary_tool with your reasoning
+  Step 1 -- identify the affected interface(s) from the telemetry
+  Step 2 -- call your chosen action tool(s), ONE at a time, following the selection rules above
+  Step 3 -- call decision_summary_tool with your reasoning
 
 In decision_summary, always mention:
   - which scenario you identified and why (which metric was the evidence)
-  - what action you took and on which interface
+  - which specific interface(s) are affected (e.g., s1-eth2)
+  - what action you took, why that tool was chosen, and on which interface
   - confidence: float 0.0-1.0
   - risk_level: low / medium / high / critical
 """
