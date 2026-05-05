@@ -1,4 +1,8 @@
 import json
+import os
+import time
+import urllib.request
+import urllib.error
 from typing import Any, TypedDict
 
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
@@ -6,37 +10,63 @@ from langchain_openai import ChatOpenAI
 from langgraph.graph import END, StateGraph
 
 # ──────────────────────────────────────────
-# Mock network tools
+# HTTP action dispatcher → FastAPI in Mininet VM
+# ──────────────────────────────────────────
+
+MININET_API_URL = os.getenv("MININET_API_URL", "http://192.168.249.132:8000")
+
+
+def _send_action(payload: dict) -> dict:
+    """POST action to the FastAPI SDN executor running inside the Mininet VM."""
+    payload["timestamp"] = time.time()
+    url = MININET_API_URL.rstrip("/") + "/action"
+    try:
+        data = json.dumps(payload).encode("utf-8")
+        req = urllib.request.Request(
+            url,
+            data=data,
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        with urllib.request.urlopen(req, timeout=5) as resp:
+            body = json.loads(resp.read().decode())
+            print(f"[ACTION] {payload['action']} → Mininet API: {body.get('status')}")
+            return body
+    except urllib.error.URLError as e:
+        print(f"[ACTION] Mininet API unreachable ({url}): {e.reason}")
+        return {"status": "error", "action": payload["action"], "error": str(e.reason)}
+    except Exception as e:
+        print(f"[ACTION] Mininet API error: {e}")
+        return {"status": "error", "action": payload["action"], "error": str(e)}
+
+
+# ──────────────────────────────────────────
+# Network tools — send HTTP to Mininet FastAPI
 # ──────────────────────────────────────────
 
 def reroute_traffic(device: str, path: str) -> dict:
-    args = json.dumps({"device": device, "path": path})
-    print(f"[MOCK_TOOL] reroute_traffic args={args}")
-    return {"status": "ok", "action": "reroute_traffic", "device": device, "path": path}
+    print(f"[TOOL] reroute_traffic device={device} path={path}")
+    return _send_action({"action": "reroute_traffic", "device": device, "path": path})
 
 
 def throttle_link(device: str, interface: str, rate_limit_mbps: float) -> dict:
-    args = json.dumps({"device": device, "interface": interface, "rate_limit_mbps": rate_limit_mbps})
-    print(f"[MOCK_TOOL] throttle_link args={args}")
-    return {"status": "ok", "action": "throttle_link", "device": device, "interface": interface, "rate_limit_mbps": rate_limit_mbps}
+    print(f"[TOOL] throttle_link device={device} interface={interface} rate={rate_limit_mbps}Mbps")
+    return _send_action({"action": "throttle_link", "device": device, "interface": interface, "rate_limit_mbps": rate_limit_mbps})
 
 
 def restart_interface(device: str, interface: str) -> dict:
-    args = json.dumps({"device": device, "interface": interface})
-    print(f"[MOCK_TOOL] restart_interface args={args}")
-    return {"status": "ok", "action": "restart_interface", "device": device, "interface": interface}
+    print(f"[TOOL] restart_interface device={device} interface={interface}")
+    return _send_action({"action": "restart_interface", "device": device, "interface": interface})
 
 
 def apply_qos_profile(device: str, profile: str) -> dict:
-    args = json.dumps({"device": device, "profile": profile})
-    print(f"[MOCK_TOOL] apply_qos_profile args={args}")
-    return {"status": "ok", "action": "apply_qos_profile", "device": device, "profile": profile}
+    print(f"[TOOL] apply_qos_profile device={device} profile={profile}")
+    return _send_action({"action": "apply_qos_profile", "device": device, "profile": profile})
 
 
 def monitor_only(device: str, reason: str = "") -> dict:
-    args = json.dumps({"device": device, "reason": reason})
-    print(f"[MOCK_TOOL] monitor_only args={args}")
-    return {"status": "ok", "action": "monitor_only", "device": device, "reason": reason, "message": "No action taken — monitoring only."}
+    print(f"[TOOL] monitor_only device={device} reason={reason}")
+    return {"status": "ok", "action": "monitor_only", "device": device, "reason": reason}
 
 
 def _decision_summary(decision_summary: str, recommended_actions: list, confidence: float, risk_level: str) -> dict:
@@ -110,29 +140,65 @@ BOUND_TOOLS = [
     decision_summary_tool,
 ]
 
-OPTIMIZATION_SYSTEM_PROMPT = """You are a network optimization agent for a QoS monitoring system.
-Your job is to take CONCRETE remediation actions when network metrics show degradation.
-Never refuse to act when anomaly_detected=true or sla_alert=true — these are confirmed signals, not estimates.
+OPTIMIZATION_SYSTEM_PROMPT = """You are an autonomous SDN optimization agent for a Mininet telecom testbed.
 
-Decision rules (apply in order):
-1. If anomaly_detected=true AND sla_alert=true → CRITICAL situation. Call reroute_traffic OR apply_qos_profile immediately, then decision_summary_tool.
-2. If plr > 0.05 OR e2e_delay_ms > 100 OR jitter_ms > 20 → call apply_qos_profile to prioritize traffic.
-3. If dataplane_latency_ms > 10 OR rx_dropped > 20 → call reroute_traffic to bypass congested path.
-4. If mos_voice < 3.0 OR streaming_mos < 3.0 → call apply_qos_profile with a voice/video priority profile.
-5. If throughput_mbps < 5 AND flow_count > 120 → call throttle_link to reduce congestion.
-6. ONLY call monitor_only if ALL metrics are within normal range (plr<0.02, e2e_delay<80ms, mos>3.5, no anomaly, no sla_alert).
+== NETWORK TOPOLOGY ==
+Core switch : s1
+  s1-eth1 -> OUTDOOR_RAN  (baseline: loss=2%,  delay=5ms,  jitter=2ms)
+  s1-eth2 -> INDOOR_RAN   (baseline: loss=8%,  delay=15ms, jitter=5ms)
+  s1-eth3 -> IMS_CDN      (baseline: loss=1%,  delay=2ms,  jitter=1ms)
+  s1-eth4 -> INTERNET     (baseline: loss=2%,  delay=20ms, jitter=3ms)
 
-confidence scoring:
-- anomaly_detected=true + sla_alert=true → confidence >= 0.85
-- only one of them → confidence 0.65-0.80
-- neither → confidence 0.50, use monitor_only
+ALWAYS use device="s1" and interfaces like "s1-eth1". NEVER use "switch-core-01" or "eth0".
 
-After taking action(s), you MUST call decision_summary_tool as the FINAL step with:
-  - decision_summary: one sentence describing what action was taken and why
-  - recommended_actions: list of action strings (e.g. ["apply_qos_profile on switch-core-01", "monitor traffic"])
+== KNOWN NETWORK SCENARIOS ==
+The network generates these degradation scenarios artificially via tc/netem:
+- CALL_DROP          : burst loss 50-85% on s1-eth1 and s1-eth2 -> high plr, cdr_flag=1
+- POOR_VOICE_QUALITY : moderate loss 12-20% + high delay on s1-eth2 -> mos_voice < 3.0
+- LOW_THROUGHPUT     : loss 25-40% on s1-eth3 (IMS_CDN) -> low throughput, streaming degraded
+- HIGH_LATENCY       : delay 150-400ms on s1-eth1/eth2 -> high e2e_delay_ms, dataplane_latency_ms
+- CAPACITY_EXHAUSTED : loss 20-35% all interfaces + high flow_count -> all metrics degraded
+- NORMAL             : baseline values, all metrics within normal range
+
+== AVAILABLE TOOLS ==
+You have full autonomy to choose any combination of tools that fits the situation:
+
+- reroute_traffic(device, path)
+    Reduces loss on a backup interface (path like "backup-path-via-eth2").
+    Best for: HIGH_LATENCY where rerouting avoids the congested path.
+
+- throttle_link(device, interface, rate_limit_mbps)
+    Restores tc/netem on a specific interface back to baseline loss.
+    Best for: LOW_THROUGHPUT on s1-eth3, CAPACITY_EXHAUSTED on congested interfaces.
+
+- apply_qos_profile(device, profile)
+    profile="voice-video-priority" : reduces loss to near-zero on all voice/video paths.
+    profile="high-priority-qos"    : restores all interfaces to baseline loss values.
+    Best for: CALL_DROP, POOR_VOICE_QUALITY, general multi-interface degradation.
+
+- restart_interface(device, interface)
+    Full netem reset on one interface back to its baseline values.
+    Best for: a single interface with extreme degradation that needs a hard reset.
+
+- monitor_only(device, reason)
+    No network change. Best for: NORMAL state or when uncertainty is too high to act.
+
+- decision_summary_tool (ALWAYS call this last)
+
+== YOUR TASK ==
+You receive telemetry every 15-30 seconds enriched with anomaly detection and SLA forecasting results.
+Analyze the metrics freely, identify the most likely scenario, and choose the most appropriate action.
+You are not limited to one tool — use your judgment.
+
+PROCESS:
+  Step 1 -- call your chosen action tool(s), ONE at a time
+  Step 2 -- call decision_summary_tool with your reasoning
+
+In decision_summary, always mention:
+  - which scenario you identified and why (which metric was the evidence)
+  - what action you took and on which interface
   - confidence: float 0.0-1.0
   - risk_level: low / medium / high / critical
-Do NOT output JSON as text. Always call decision_summary_tool last.
 """
 
 # ──────────────────────────────────────────
