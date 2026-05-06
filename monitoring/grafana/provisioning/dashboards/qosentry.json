@@ -1,0 +1,304 @@
+{
+  "title": "QoSentry AI Models",
+  "uid": "qosentry-ai",
+  "schemaVersion": 36,
+  "version": 3,
+  "refresh": "15s",
+  "time": { "from": "now-30m", "to": "now" },
+  "panels": [
+
+    { "id": 20, "title": "SYSTEM HEALTH", "type": "text",
+      "gridPos": { "x": 0, "y": 0, "w": 24, "h": 1 },
+      "options": { "content": "## System Health", "mode": "markdown" } },
+
+    { "id": 21, "title": "Service Readiness",
+      "type": "stat",
+      "gridPos": { "x": 0, "y": 1, "w": 10, "h": 4 },
+      "targets": [
+        { "expr": "anomaly_model_ready",  "legendFormat": "Anomaly Detection", "datasource": "Prometheus" },
+        { "expr": "sla_model_ready",      "legendFormat": "SLA Forecasting",   "datasource": "Prometheus" },
+        { "expr": "agent_model_ready",    "legendFormat": "Agent (LLM)",       "datasource": "Prometheus" },
+        { "expr": "rag_model_ready",      "legendFormat": "RAG Service",       "datasource": "Prometheus" }
+      ],
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "orientation": "horizontal", "colorMode": "background" },
+      "fieldConfig": {
+        "defaults": {
+          "mappings": [{ "type": "value", "options": { "0": { "text": "DOWN", "color": "red" }, "1": { "text": "READY", "color": "green" } } }],
+          "thresholds": { "mode": "absolute", "steps": [{ "color": "red", "value": 0 }, { "color": "green", "value": 1 }] }
+        }
+      }
+    },
+
+    { "id": 22, "title": "Global Request Rate / sec (all services)",
+      "type": "timeseries",
+      "gridPos": { "x": 10, "y": 1, "w": 14, "h": 4 },
+      "targets": [
+        { "expr": "rate(anomaly_predict_requests_total[1m])",    "legendFormat": "Anomaly predict",    "datasource": "Prometheus" },
+        { "expr": "rate(sla_predict_requests_total[1m])",        "legendFormat": "SLA predict",        "datasource": "Prometheus" },
+        { "expr": "rate(agent_optimization_requests_total[1m])", "legendFormat": "Agent optimization", "datasource": "Prometheus" },
+        { "expr": "rate(agent_chat_requests_total[1m])",         "legendFormat": "Agent chat",         "datasource": "Prometheus" },
+        { "expr": "rate(rag_retrieve_requests_total[1m])",       "legendFormat": "RAG retrieve",       "datasource": "Prometheus" }
+      ],
+      "fieldConfig": { "defaults": { "unit": "reqps" } }
+    },
+
+    { "id": 30, "title": "ANOMALY DETECTION", "type": "text",
+      "gridPos": { "x": 0, "y": 5, "w": 24, "h": 1 },
+      "options": { "content": "## Anomaly Detection", "mode": "markdown" } },
+
+    { "id": 1, "title": "Anomaly Rate — last call",
+      "description": "Fraction of sliding windows detected as anomalous in the most recent /predict call. 100% means all windows (e.g. 2/2) triggered the anomaly threshold — depends on how many rows you send.",
+      "type": "gauge",
+      "gridPos": { "x": 0, "y": 6, "w": 6, "h": 5 },
+      "targets": [
+        { "expr": "anomaly_rate_last", "legendFormat": "Anomaly Rate", "datasource": "Prometheus" }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit", "min": 0, "max": 1,
+          "thresholds": { "mode": "absolute", "steps": [
+            { "color": "green", "value": 0 }, { "color": "yellow", "value": 0.1 }, { "color": "red", "value": 0.3 }
+          ]}
+        }
+      }
+    },
+
+    { "id": 2, "title": "Anomaly Windows — last call",
+      "description": "Number of anomaly windows vs total windows in the last call. Total windows = (rows sent - window_size) / stride. With 60 rows and window_size=30: 2 total windows.",
+      "type": "stat",
+      "gridPos": { "x": 6, "y": 6, "w": 6, "h": 5 },
+      "targets": [
+        { "expr": "anomaly_anomaly_windows_last", "legendFormat": "Anomaly Windows", "datasource": "Prometheus" },
+        { "expr": "anomaly_total_windows_last",   "legendFormat": "Total Windows",   "datasource": "Prometheus" }
+      ],
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "orientation": "horizontal" }
+    },
+
+    { "id": 3, "title": "Max Reconstruction Score — history",
+      "description": "Higher score = more abnormal signal. Threshold 'best' = 0.51. Score > 0.51 triggers anomaly flag.",
+      "type": "timeseries",
+      "gridPos": { "x": 12, "y": 6, "w": 6, "h": 5 },
+      "targets": [
+        { "expr": "anomaly_reconstruction_score_max_last", "legendFormat": "Max Recon Score", "datasource": "Prometheus" }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "thresholds": { "mode": "absolute", "steps": [
+            { "color": "green", "value": 0 }, { "color": "orange", "value": 0.51 }, { "color": "red", "value": 1.5 }
+          ]},
+          "custom": { "thresholdsStyle": { "mode": "line" } }
+        }
+      }
+    },
+
+    { "id": 4, "title": "Anomaly Predict Requests / sec",
+      "type": "timeseries",
+      "gridPos": { "x": 18, "y": 6, "w": 6, "h": 5 },
+      "targets": [
+        { "expr": "rate(anomaly_predict_requests_total[1m])", "legendFormat": "Requests/sec", "datasource": "Prometheus" },
+        { "expr": "rate(anomaly_predict_errors_total[1m])",  "legendFormat": "Errors/sec",   "datasource": "Prometheus" }
+      ],
+      "fieldConfig": {
+        "overrides": [
+          { "matcher": { "id": "byName", "options": "Errors/sec" }, "properties": [{ "id": "color", "value": { "fixedColor": "red", "mode": "fixed" } }] }
+        ]
+      }
+    },
+
+    { "id": 31, "title": "SLA FORECASTING", "type": "text",
+      "gridPos": { "x": 0, "y": 11, "w": 24, "h": 1 },
+      "options": { "content": "## SLA Forecasting", "mode": "markdown" } },
+
+    { "id": 5, "title": "SLA Alert Rate — last call",
+      "description": "Fraction of windows where risk_score > sla_alert_threshold (default 0.30). 100% = all windows exceeded threshold.",
+      "type": "gauge",
+      "gridPos": { "x": 0, "y": 12, "w": 6, "h": 5 },
+      "targets": [
+        { "expr": "sla_alert_rate_last", "legendFormat": "SLA Alert Rate", "datasource": "Prometheus" }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit", "min": 0, "max": 1,
+          "thresholds": { "mode": "absolute", "steps": [
+            { "color": "green", "value": 0 }, { "color": "yellow", "value": 0.1 }, { "color": "red", "value": 0.3 }
+          ]}
+        }
+      }
+    },
+
+    { "id": 6, "title": "Max SLA Risk Score — history",
+      "description": "Risk score per window: sum of probabilities for CALL_DROP + CAPACITY_EXHAUSTED classes. >0.4 = warning, >0.7 = critical.",
+      "type": "timeseries",
+      "gridPos": { "x": 6, "y": 12, "w": 6, "h": 5 },
+      "targets": [
+        { "expr": "sla_risk_score_max_last", "legendFormat": "Max Risk Score", "datasource": "Prometheus" }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "min": 0, "max": 1,
+          "thresholds": { "mode": "absolute", "steps": [
+            { "color": "green", "value": 0 }, { "color": "yellow", "value": 0.4 }, { "color": "red", "value": 0.7 }
+          ]},
+          "custom": { "thresholdsStyle": { "mode": "line" } }
+        }
+      }
+    },
+
+    { "id": 7, "title": "SLA Alerts fired / sec",
+      "description": "Rate of windows that triggered sla_alert=true. Spike = a /predict call with alerts.",
+      "type": "timeseries",
+      "gridPos": { "x": 12, "y": 12, "w": 6, "h": 5 },
+      "targets": [
+        { "expr": "rate(sla_alerts_total[1m])", "legendFormat": "SLA Alerts/sec", "datasource": "Prometheus" }
+      ],
+      "fieldConfig": { "defaults": { "color": { "fixedColor": "orange", "mode": "fixed" } } }
+    },
+
+    { "id": 8, "title": "NORMAL Class Fraction — last call",
+      "description": "Fraction of windows predicted as NORMAL. 100% = healthy network. Below 50% = degraded conditions.",
+      "type": "timeseries",
+      "gridPos": { "x": 18, "y": 12, "w": 6, "h": 5 },
+      "targets": [
+        { "expr": "sla_predicted_class_normal_fraction_last", "legendFormat": "NORMAL fraction", "datasource": "Prometheus" }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit", "min": 0, "max": 1,
+          "thresholds": { "mode": "absolute", "steps": [
+            { "color": "red", "value": 0 }, { "color": "yellow", "value": 0.5 }, { "color": "green", "value": 0.8 }
+          ]},
+          "custom": { "thresholdsStyle": { "mode": "line" } }
+        }
+      }
+    },
+
+    { "id": 32, "title": "AGENT (LLM)", "type": "text",
+      "gridPos": { "x": 0, "y": 17, "w": 24, "h": 1 },
+      "options": { "content": "## Agent (LLM — LangGraph + Groq)", "mode": "markdown" } },
+
+    { "id": 9, "title": "Agent Optimization Latency (p50 / p95)",
+      "description": "Time from receiving anomaly+SLA results to returning a decision. Includes LLM inference time on Groq.",
+      "type": "timeseries",
+      "gridPos": { "x": 0, "y": 18, "w": 8, "h": 5 },
+      "targets": [
+        { "expr": "histogram_quantile(0.50, rate(agent_optimization_latency_seconds_bucket[2m]))", "legendFormat": "Optimization p50", "datasource": "Prometheus" },
+        { "expr": "histogram_quantile(0.95, rate(agent_optimization_latency_seconds_bucket[2m]))", "legendFormat": "Optimization p95", "datasource": "Prometheus" },
+        { "expr": "histogram_quantile(0.50, rate(agent_chat_latency_seconds_bucket[2m]))",         "legendFormat": "Chat p50",         "datasource": "Prometheus" },
+        { "expr": "histogram_quantile(0.95, rate(agent_chat_latency_seconds_bucket[2m]))",         "legendFormat": "Chat p95",         "datasource": "Prometheus" }
+      ],
+      "fieldConfig": { "defaults": { "unit": "s" } }
+    },
+
+    { "id": 10, "title": "Agent Tool Calls — total per tool",
+      "description": "Cumulative count of each SDN tool called by the LLM since last restart. 'No data' = no optimization request received yet.",
+      "type": "stat",
+      "gridPos": { "x": 8, "y": 18, "w": 8, "h": 5 },
+      "targets": [
+        { "expr": "agent_tool_calls_total", "legendFormat": "{{tool_name}}", "datasource": "Prometheus" }
+      ],
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "orientation": "horizontal", "colorMode": "value" }
+    },
+
+    { "id": 11, "title": "Agent Errors & Rate Limits",
+      "description": "429 = Groq daily token limit hit. Opt errors = failed optimization calls. Chat errors = failed chat calls.",
+      "type": "timeseries",
+      "gridPos": { "x": 16, "y": 18, "w": 8, "h": 5 },
+      "targets": [
+        { "expr": "rate(agent_llm_rate_limits_total[1m])",     "legendFormat": "Rate limits (429)", "datasource": "Prometheus" },
+        { "expr": "rate(agent_optimization_errors_total[1m])", "legendFormat": "Opt errors",        "datasource": "Prometheus" },
+        { "expr": "rate(agent_chat_errors_total[1m])",         "legendFormat": "Chat errors",       "datasource": "Prometheus" }
+      ],
+      "fieldConfig": {
+        "overrides": [
+          { "matcher": { "id": "byName", "options": "Rate limits (429)" }, "properties": [{ "id": "color", "value": { "fixedColor": "orange", "mode": "fixed" } }] },
+          { "matcher": { "id": "byName", "options": "Opt errors" },        "properties": [{ "id": "color", "value": { "fixedColor": "red",    "mode": "fixed" } }] },
+          { "matcher": { "id": "byName", "options": "Chat errors" },       "properties": [{ "id": "color", "value": { "fixedColor": "#ff6b6b","mode": "fixed" } }] }
+        ]
+      }
+    },
+
+    { "id": 33, "title": "RAG SERVICE", "type": "text",
+      "gridPos": { "x": 0, "y": 23, "w": 24, "h": 1 },
+      "options": { "content": "## RAG Service (Qdrant vector store)", "mode": "markdown" } },
+
+    { "id": 12, "title": "RAG Retrieve Latency (p50 / p95)",
+      "description": "Time to embed the query + search Qdrant. p50~700ms on CPU (embedding model). p95 can reach 1-2s under load.",
+      "type": "timeseries",
+      "gridPos": { "x": 0, "y": 24, "w": 8, "h": 5 },
+      "targets": [
+        { "expr": "histogram_quantile(0.50, rate(rag_retrieve_latency_seconds_bucket[2m]))", "legendFormat": "Retrieve p50", "datasource": "Prometheus" },
+        { "expr": "histogram_quantile(0.95, rate(rag_retrieve_latency_seconds_bucket[2m]))", "legendFormat": "Retrieve p95", "datasource": "Prometheus" }
+      ],
+      "fieldConfig": { "defaults": { "unit": "s" } }
+    },
+
+    { "id": 13, "title": "RAG Ingest Activity",
+      "description": "Chunks ingested per second (spikes when uploading docs) and cumulative error count.",
+      "type": "timeseries",
+      "gridPos": { "x": 8, "y": 24, "w": 8, "h": 5 },
+      "targets": [
+        { "expr": "rate(rag_ingest_chunks_total[1m])",  "legendFormat": "Chunks ingested/sec", "datasource": "Prometheus" },
+        { "expr": "rate(rag_ingest_errors_total[1m])",  "legendFormat": "Ingest errors/sec",   "datasource": "Prometheus" }
+      ],
+      "fieldConfig": {
+        "overrides": [
+          { "matcher": { "id": "byName", "options": "Ingest errors/sec" }, "properties": [{ "id": "color", "value": { "fixedColor": "red", "mode": "fixed" } }] }
+        ]
+      }
+    },
+
+    { "id": 14, "title": "RAG Total Chunks in Vector Store",
+      "description": "Total number of text chunks indexed in Qdrant. Updated on every Prometheus scrape (every 15s).",
+      "type": "stat",
+      "gridPos": { "x": 16, "y": 24, "w": 8, "h": 5 },
+      "targets": [
+        { "expr": "rag_total_chunks", "legendFormat": "Total Chunks", "datasource": "Prometheus" }
+      ],
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "background" },
+      "fieldConfig": {
+        "defaults": {
+          "thresholds": { "mode": "absolute", "steps": [{ "color": "blue", "value": 0 }] }
+        }
+      }
+    },
+
+    { "id": 34, "title": "PREDICTION LATENCY — ALL SERVICES", "type": "text",
+      "gridPos": { "x": 0, "y": 29, "w": 24, "h": 1 },
+      "options": { "content": "## Prediction Latency — All AI Services", "mode": "markdown" } },
+
+    { "id": 15, "title": "AI Model Predict Latency p50 / p95",
+      "description": "Latency of /predict calls only (anomaly + SLA models). Agent and RAG latency are shown in their own sections above.",
+      "type": "timeseries",
+      "gridPos": { "x": 0, "y": 30, "w": 12, "h": 6 },
+      "targets": [
+        { "expr": "histogram_quantile(0.50, rate(anomaly_predict_latency_seconds_bucket[2m]))", "legendFormat": "Anomaly p50", "datasource": "Prometheus" },
+        { "expr": "histogram_quantile(0.95, rate(anomaly_predict_latency_seconds_bucket[2m]))", "legendFormat": "Anomaly p95", "datasource": "Prometheus" },
+        { "expr": "histogram_quantile(0.50, rate(sla_predict_latency_seconds_bucket[2m]))",     "legendFormat": "SLA p50",     "datasource": "Prometheus" },
+        { "expr": "histogram_quantile(0.95, rate(sla_predict_latency_seconds_bucket[2m]))",     "legendFormat": "SLA p95",     "datasource": "Prometheus" }
+      ],
+      "fieldConfig": { "defaults": { "unit": "s" } }
+    },
+
+    { "id": 16, "title": "Error Rate — All Services / sec",
+      "description": "0 on all lines = healthy system. Any spike indicates a failed request. Orange = LLM rate limit (recoverable). Red = actual error.",
+      "type": "timeseries",
+      "gridPos": { "x": 12, "y": 30, "w": 12, "h": 6 },
+      "targets": [
+        { "expr": "rate(anomaly_predict_errors_total[1m])",    "legendFormat": "Anomaly errors",   "datasource": "Prometheus" },
+        { "expr": "rate(sla_predict_errors_total[1m])",        "legendFormat": "SLA errors",        "datasource": "Prometheus" },
+        { "expr": "rate(agent_llm_rate_limits_total[1m])",     "legendFormat": "Agent rate limits", "datasource": "Prometheus" },
+        { "expr": "rate(agent_optimization_errors_total[1m])", "legendFormat": "Agent opt errors",  "datasource": "Prometheus" },
+        { "expr": "rate(rag_retrieve_errors_total[1m])",       "legendFormat": "RAG errors",        "datasource": "Prometheus" }
+      ],
+      "fieldConfig": {
+        "overrides": [
+          { "matcher": { "id": "byName", "options": "Agent rate limits" }, "properties": [{ "id": "color", "value": { "fixedColor": "orange", "mode": "fixed" } }] },
+          { "matcher": { "id": "byName", "options": "Anomaly errors" },    "properties": [{ "id": "color", "value": { "fixedColor": "red",    "mode": "fixed" } }] },
+          { "matcher": { "id": "byName", "options": "SLA errors" },        "properties": [{ "id": "color", "value": { "fixedColor": "#ff6b6b","mode": "fixed" } }] },
+          { "matcher": { "id": "byName", "options": "Agent opt errors" },  "properties": [{ "id": "color", "value": { "fixedColor": "#ff9900","mode": "fixed" } }] },
+          { "matcher": { "id": "byName", "options": "RAG errors" },        "properties": [{ "id": "color", "value": { "fixedColor": "#cc0000","mode": "fixed" } }] }
+        ]
+      }
+    }
+  ]
+}

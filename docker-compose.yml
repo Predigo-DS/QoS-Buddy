@@ -209,6 +209,50 @@ services:
     networks:
       - qos-network
 
+  # ─────────────────────────────────────────
+  # PROMETHEUS
+  # ─────────────────────────────────────────
+  prometheus:
+    image: prom/prometheus:v2.52.0
+    container_name: qos-prometheus
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus_data:/prometheus
+    command:
+      - "--config.file=/etc/prometheus/prometheus.yml"
+      - "--storage.tsdb.path=/prometheus"
+      - "--storage.tsdb.retention.time=15d"
+      - "--web.enable-lifecycle"
+    networks:
+      - qos-network
+    restart: unless-stopped
+    depends_on:
+      - anomaly_detection
+      - sla_forecasting
+
+  # ─────────────────────────────────────────
+  # GRAFANA
+  # ─────────────────────────────────────────
+  grafana:
+    image: grafana/grafana:10.4.3
+    container_name: qos-grafana
+    ports:
+      - "3001:3000"
+    environment:
+      - GF_SECURITY_ADMIN_USER=admin
+      - GF_SECURITY_ADMIN_PASSWORD=qosentry
+      - GF_USERS_ALLOW_SIGN_UP=false
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ./monitoring/grafana/provisioning:/etc/grafana/provisioning:ro
+    networks:
+      - qos-network
+    restart: unless-stopped
+    depends_on:
+      - prometheus
+
 # ─────────────────────────────────────────
 # SHARED NETWORK & VOLUMES
 # ─────────────────────────────────────────
@@ -220,3 +264,5 @@ volumes:
   qdrant_data:
   postgres_data:
   hf_cache:
+  prometheus_data:
+  grafana_data:

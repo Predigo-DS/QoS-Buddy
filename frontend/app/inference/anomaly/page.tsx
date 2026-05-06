@@ -23,15 +23,65 @@ import {
 
 type InputRow = Record<string, number | string | boolean>
 
-function sampleValue(feature: string, index: number): number {
+type NetworkScenario = 'normal' | 'degraded' | 'critical'
+
+const SCENARIO_CONFIG: Record<NetworkScenario, {
+  label: string
+  description: string
+  color: string
+  e2e_delay: number
+  plr: number
+  mos: number
+  throughput: number
+  jitter: number
+  noise: number
+}> = {
+  normal: {
+    label: 'Normal',
+    description: 'Stable network — low loss, good MOS, low delay. Anomaly rate should be ~0%.',
+    color: 'text-green-400',
+    e2e_delay: 10, plr: 0.002, mos: 4.3, throughput: 85, jitter: 2, noise: 0.05,
+  },
+  degraded: {
+    label: 'Degraded',
+    description: 'Moderate degradation — elevated delay and loss. Anomaly rate should be ~30-70%.',
+    color: 'text-yellow-400',
+    e2e_delay: 80, plr: 0.04, mos: 3.2, throughput: 40, jitter: 12, noise: 0.15,
+  },
+  critical: {
+    label: 'Critical',
+    description: 'Severe degradation — high loss, poor MOS, high delay. Anomaly rate should be ~100%.',
+    color: 'text-red-400',
+    e2e_delay: 300, plr: 0.15, mos: 1.8, throughput: 5, jitter: 50, noise: 0.2,
+  },
+}
+
+function sampleValue(feature: string, index: number, scenario: NetworkScenario = 'normal'): number {
+  const cfg = SCENARIO_CONFIG[scenario]
+  const noise = () => 1 + (Math.random() - 0.5) * cfg.noise
   const f = feature.toLowerCase()
-  if (f.includes('delay') || f.includes('latency') || f.includes('jitter')) return 14 + (index % 8) * 2
-  if (f.includes('loss') || f.includes('drop') || f.includes('plr')) return (index % 6) * 0.02
-  if (f.includes('throughput') || f.includes('bitrate')) return 90 - (index % 10) * 4
-  if (f.includes('mos') || f.includes('qoe')) return 4 - (index % 7) * 0.18
+  if (f === 'e2e_delay_ms')           return +(cfg.e2e_delay * noise()).toFixed(2)
+  if (f === 'plr')                    return +(cfg.plr * noise()).toFixed(4)
+  if (f === 'jitter_ms')              return +(cfg.jitter * noise()).toFixed(2)
+  if (f === 'mos_voice')              return +Math.max(1, cfg.mos * noise()).toFixed(3)
+  if (f === 'throughput_mbps')        return +Math.max(0.1, cfg.throughput * noise()).toFixed(2)
+  if (f === 'effective_bitrate_mbps') return +Math.max(0.1, cfg.throughput * 0.9 * noise()).toFixed(2)
+  if (f === 'streaming_mos')          return +Math.max(1, (cfg.mos - 0.2) * noise()).toFixed(3)
+  if (f === 'buffering_ratio')        return +(cfg.plr * 2 * noise()).toFixed(4)
+  if (f === 'call_setup_time_ms')     return +(200 + cfg.e2e_delay * 0.5 * noise()).toFixed(1)
+  if (f === 'ctrl_plane_rtt_ms')      return +(cfg.e2e_delay * 0.4 * noise()).toFixed(1)
+  if (f === 'dns_latency_ms')         return +(30 + cfg.e2e_delay * 0.1 * noise()).toFixed(1)
+  if (f === 'video_start_time_ms')    return +(800 + cfg.e2e_delay * 2 * noise()).toFixed(1)
+  if (f === 'rebuffering_freq')       return +(cfg.plr * 0.5 * noise()).toFixed(4)
+  if (f === 'rebuffering_count')      return Math.round(cfg.plr * 10 * noise())
+  if (f === 'total_stall_seconds')    return +(cfg.plr * 3 * noise()).toFixed(3)
+  if (f === 'cdr_flag')               return cfg.plr > 0.1 ? 1 : 0
+  if (f.includes('delay') || f.includes('latency') || f.includes('jitter')) return +(cfg.e2e_delay * noise()).toFixed(2)
+  if (f.includes('loss') || f.includes('drop') || f.includes('plr'))        return +(cfg.plr * noise()).toFixed(4)
+  if (f.includes('throughput') || f.includes('bitrate'))                     return +(cfg.throughput * noise()).toFixed(2)
+  if (f.includes('mos') || f.includes('qoe'))                                return +Math.max(1, cfg.mos * noise()).toFixed(3)
   if (f.includes('count')) return 4 + (index % 5)
-  if (f.includes('bytes') || f.includes('packets')) return 1000 + index * 25
-  return (index % 9) + 1
+  return +(Math.random() * 5 + 1).toFixed(2)
 }
 
 export default function AnomalyInferencePage() {
@@ -48,6 +98,7 @@ export default function AnomalyInferencePage() {
   const [rowsJson, setRowsJson] = useState('[]')
   const [stride, setStride] = useState('1')
   const [thresholdName, setThresholdName] = useState('best')
+  const [scenario, setScenario] = useState<NetworkScenario>('normal')
 
   const [submitting, setSubmitting] = useState(false)
   const [submitError, setSubmitError] = useState<string | null>(null)
@@ -55,12 +106,13 @@ export default function AnomalyInferencePage() {
 
   const thresholdOptions = useMemo(() => Object.keys(metadata?.thresholds ?? {}), [metadata])
 
-  const regenerateRows = (meta: AnomalyMetadataResponse) => {
+  const regenerateRows = (meta: AnomalyMetadataResponse, sc?: NetworkScenario) => {
+    const activeScenario = sc ?? scenario
     const rowCount = Math.max(meta.window_size * 2, meta.window_size + 1)
     const generated: InputRow[] = Array.from({ length: rowCount }, (_, i) => {
       const row: InputRow = {}
       meta.features.forEach((feature) => {
-        row[feature] = sampleValue(feature, i)
+        row[feature] = sampleValue(feature, i, activeScenario)
       })
       return row
     })
@@ -217,6 +269,29 @@ export default function AnomalyInferencePage() {
             <div className="glass rounded-2xl p-6 border border-border space-y-5">
               <div className="flex flex-wrap items-center justify-between gap-3">
                 <h2 className="text-xl font-bold text-text-main">Input Payload</h2>
+                <div className="flex items-center gap-2 flex-wrap">
+                  {(Object.keys(SCENARIO_CONFIG) as NetworkScenario[]).map((sc) => {
+                    const cfg = SCENARIO_CONFIG[sc]
+                    return (
+                      <button
+                        key={sc}
+                        onClick={() => {
+                          setScenario(sc)
+                          regenerateRows(metadata, sc)
+                        }}
+                        title={cfg.description}
+                        className={`text-xs px-3 py-1.5 rounded-lg border transition-colors font-medium ${
+                          scenario === sc
+                            ? 'border-primary bg-primary/20 text-primary'
+                            : 'border-border text-text-secondary hover:bg-surface/60'
+                        }`}
+                      >
+                        <span className={cfg.color}>●</span> {cfg.label}
+                      </button>
+                    )
+                  })}
+                  <span className="text-xs text-text-secondary italic">{SCENARIO_CONFIG[scenario].description}</span>
+                </div>
                 <button
                   onClick={() => regenerateRows(metadata)}
                   className="text-xs sm:text-sm px-3 py-2 rounded-lg border border-primary/40 text-primary hover:bg-primary/10 transition-colors inline-flex items-center gap-1.5"

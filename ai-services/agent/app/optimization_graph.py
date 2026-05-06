@@ -69,14 +69,18 @@ def monitor_only(device: str, reason: str = "") -> dict:
     return {"status": "ok", "action": "monitor_only", "device": device, "reason": reason}
 
 
-def _decision_summary(decision_summary: str, recommended_actions: list, confidence: float, risk_level: str) -> dict:
+def _decision_summary(decision_summary: str, recommended_actions: list, confidence, risk_level: str) -> dict:
     """Captures the agent's final structured decision."""
-    print(f"[DECISION] risk={risk_level} confidence={confidence}")
+    try:
+        confidence_float = float(confidence)
+    except (TypeError, ValueError):
+        confidence_float = 0.5
+    print(f"[DECISION] risk={risk_level} confidence={confidence_float}")
     return {
         "status": "ok",
         "decision_summary": decision_summary,
         "recommended_actions": recommended_actions,
-        "confidence": confidence,
+        "confidence": confidence_float,
         "risk_level": risk_level,
     }
 
@@ -120,12 +124,12 @@ def monitor_only_tool(device: str, reason: str = "") -> dict:
 
 
 @lc_tool
-def decision_summary_tool(decision_summary: str, recommended_actions: list, confidence: float, risk_level: str) -> dict:
+def decision_summary_tool(decision_summary: str, recommended_actions: list, confidence: str, risk_level: str) -> dict:
     """REQUIRED: Call this tool LAST to submit your final structured decision after all actions are complete.
     Args:
         decision_summary: One sentence describing what was done and why.
         recommended_actions: List of action strings taken or recommended.
-        confidence: Your confidence score between 0.0 and 1.0.
+        confidence: Your confidence score between 0.0 and 1.0 as a string, e.g. "0.85".
         risk_level: Current risk level: low, medium, high, or critical.
     """
     return _decision_summary(decision_summary, recommended_actions, confidence, risk_level)
