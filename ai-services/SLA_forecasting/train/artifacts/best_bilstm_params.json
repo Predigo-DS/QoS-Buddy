@@ -1,0 +1,13 @@
+{
+  "hidden_size": 96,
+  "num_layers": 2,
+  "dropout": 0.5766286109216396,
+  "input_dropout": 0.04889046913996514,
+  "lstm_out_dropout": 0.1793659555267129,
+  "classifier_hidden_mult": 1.0,
+  "lr": 0.0009809088126582904,
+  "weight_decay": 0.00014114557203084765,
+  "focal_gamma": 1.7937254968573988,
+  "label_smoothing": 0.08637453867706114,
+  "batch_size": 128
+}
