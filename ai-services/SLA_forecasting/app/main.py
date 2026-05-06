@@ -424,6 +424,24 @@ def _ensemble_probs(windows: np.ndarray) -> np.ndarray:
     return probs.cpu().numpy()
 
 
+from prometheus_client import Counter, Histogram, Gauge, generate_latest, CONTENT_TYPE_LATEST
+from fastapi.responses import Response
+import time as _time
+
+# ---------------------------------------------------------------------------
+# Prometheus metrics
+# ---------------------------------------------------------------------------
+SLA_PREDICT_REQUESTS  = Counter("sla_predict_requests_total", "Total SLA prediction requests")
+SLA_PREDICT_ERRORS    = Counter("sla_predict_errors_total", "Total SLA prediction errors")
+SLA_ALERTS_TOTAL      = Counter("sla_alerts_total", "Total SLA alerts triggered")
+SLA_ALERT_RATE        = Gauge("sla_alert_rate_last", "Fraction of windows with SLA alert in last call")
+SLA_RISK_SCORE        = Gauge("sla_risk_score_max_last", "Max SLA risk score in last prediction")
+SLA_PREDICTED_CLASS   = Gauge("sla_predicted_class_normal_fraction_last",
+                               "Fraction of windows predicted as NORMAL in last call")
+SLA_PREDICT_LATENCY   = Histogram("sla_predict_latency_seconds", "SLA prediction latency in seconds",
+                                   buckets=[0.01, 0.05, 0.1, 0.25, 0.5, 1.0, 2.0, 5.0])
+SLA_MODEL_READY       = Gauge("sla_model_ready", "1 if SLA models loaded and ready, 0 otherwise")
+
 app = FastAPI(title="QoS-Buddy SLA Forecasting Service", version="1.0.0")
 app.add_middleware(
     CORSMiddleware,
@@ -439,8 +457,15 @@ def startup_event() -> None:
     try:
         _load_state()
         _state["startup_error"] = None
+        SLA_MODEL_READY.set(1)
     except Exception as e:
         _state["startup_error"] = str(e)
+        SLA_MODEL_READY.set(0)
+
+
+@app.get("/metrics")
+def metrics():
+    return Response(generate_latest(), media_type=CONTENT_TYPE_LATEST)
 
 
 @app.get("/health")
@@ -471,54 +496,75 @@ def metadata() -> dict[str, Any]:
 
 @app.post("/predict", response_model=ForecastResponse)
 def predict(req: ForecastRequest) -> ForecastResponse:
-    _require_ready()
+    SLA_PREDICT_REQUESTS.inc()
+    t0 = _time.time()
+    try:
+        _require_ready()
 
-    if not req.rows:
-        raise HTTPException(status_code=400, detail="rows cannot be empty")
+        if not req.rows:
+            SLA_PREDICT_ERRORS.inc()
+            raise HTTPException(status_code=400, detail="rows cannot be empty")
 
-    preprocess = _state["preprocess"]
-    label_encoder = _state["label_encoder"]
+        preprocess = _state["preprocess"]
+        label_encoder = _state["label_encoder"]
 
-    X = _preprocess_rows(pd.DataFrame(req.rows), req.run_id, req.segment)
-    window_size = int(preprocess.get("window_size", _state["cfg"]["window_size"]))
-    horizon = int(preprocess.get("horizon", _state["cfg"]["horizon"]))
+        X = _preprocess_rows(pd.DataFrame(req.rows), req.run_id, req.segment)
+        window_size = int(preprocess.get("window_size", _state["cfg"]["window_size"]))
+        horizon = int(preprocess.get("horizon", _state["cfg"]["horizon"]))
 
-    windows, spans = _build_windows(
-        X,
-        window_size=window_size,
-        use_all_windows=req.use_all_windows,
-        stride=req.stride,
-    )
-
-    probs = _ensemble_probs(windows)
-    pred_idx = probs.argmax(axis=1)
-    pred_labels = label_encoder.inverse_transform(pred_idx)
-
-    classes = [str(c) for c in label_encoder.classes_]
-    risk_indices = [i for i, c in enumerate(classes) if c in {"CALL_DROP", "CAPACITY_EXHAUSTED"}]
-
-    predictions: list[WindowForecast] = []
-    for i, (start, end) in enumerate(spans):
-        p = probs[i]
-        prob_map = {classes[j]: float(p[j]) for j in range(len(classes))}
-        risk_score = float(np.sum(p[risk_indices])) if risk_indices else 0.0
-        predictions.append(
-            WindowForecast(
-                window_index=i,
-                start_row=start,
-                end_row=end,
-                predicted_class=str(pred_labels[i]),
-                predicted_class_index=int(pred_idx[i]),
-                probabilities=prob_map,
-                sla_risk_score=risk_score,
-                sla_alert=bool(risk_score > req.sla_alert_threshold),
-            )
+        windows, spans = _build_windows(
+            X,
+            window_size=window_size,
+            use_all_windows=req.use_all_windows,
+            stride=req.stride,
         )
 
-    return ForecastResponse(
-        run_id=req.run_id,
-        segment=req.segment,
-        window_size=window_size,
-        horizon=horizon,
-        predictions=predictions,
-    )
+        probs = _ensemble_probs(windows)
+        pred_idx = probs.argmax(axis=1)
+        pred_labels = label_encoder.inverse_transform(pred_idx)
+
+        classes = [str(c) for c in label_encoder.classes_]
+        risk_indices = [i for i, c in enumerate(classes) if c in {"CALL_DROP", "CAPACITY_EXHAUSTED"}]
+
+        predictions: list[WindowForecast] = []
+        for i, (start, end) in enumerate(spans):
+            p = probs[i]
+            prob_map = {classes[j]: float(p[j]) for j in range(len(classes))}
+            risk_score = float(np.sum(p[risk_indices])) if risk_indices else 0.0
+            predictions.append(
+                WindowForecast(
+                    window_index=i,
+                    start_row=start,
+                    end_row=end,
+                    predicted_class=str(pred_labels[i]),
+                    predicted_class_index=int(pred_idx[i]),
+                    probabilities=prob_map,
+                    sla_risk_score=risk_score,
+                    sla_alert=bool(risk_score > req.sla_alert_threshold),
+                )
+            )
+
+        n_alerts = sum(1 for p in predictions if p.sla_alert)
+        n_total  = len(predictions)
+        n_normal = sum(1 for p in predictions if p.predicted_class == "NORMAL")
+        max_risk = max((p.sla_risk_score for p in predictions), default=0.0)
+
+        SLA_ALERTS_TOTAL.inc(n_alerts)
+        SLA_ALERT_RATE.set(n_alerts / n_total if n_total > 0 else 0.0)
+        SLA_RISK_SCORE.set(max_risk)
+        SLA_PREDICTED_CLASS.set(n_normal / n_total if n_total > 0 else 1.0)
+
+        return ForecastResponse(
+            run_id=req.run_id,
+            segment=req.segment,
+            window_size=window_size,
+            horizon=horizon,
+            predictions=predictions,
+        )
+    except HTTPException:
+        raise
+    except Exception:
+        SLA_PREDICT_ERRORS.inc()
+        raise
+    finally:
+        SLA_PREDICT_LATENCY.observe(_time.time() - t0)

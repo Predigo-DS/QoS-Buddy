@@ -5,8 +5,23 @@ from contextlib import asynccontextmanager
 from uuid import uuid4
 
 import httpx
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Response
 from fastapi.middleware.cors import CORSMiddleware
+from prometheus_client import (
+    Counter, Gauge, Histogram, generate_latest, CONTENT_TYPE_LATEST,
+)
+
+# ── Agent Prometheus metrics ──────────────────────────────────────────────────
+AGENT_CHAT_REQUESTS      = Counter("agent_chat_requests_total",         "Total /chat requests")
+AGENT_CHAT_ERRORS        = Counter("agent_chat_errors_total",           "Total /chat errors")
+AGENT_OPT_REQUESTS       = Counter("agent_optimization_requests_total", "Total /optimization/respond requests")
+AGENT_OPT_ERRORS         = Counter("agent_optimization_errors_total",   "Total /optimization/respond errors")
+AGENT_OPT_RATE_LIMITS    = Counter("agent_llm_rate_limits_total",       "Total LLM 429 rate-limit hits")
+AGENT_TOOL_CALLS         = Counter("agent_tool_calls_total",            "Total tool calls", ["tool_name"])
+AGENT_CHAT_LATENCY       = Histogram("agent_chat_latency_seconds",      "Chat request latency")
+AGENT_OPT_LATENCY        = Histogram("agent_optimization_latency_seconds", "Optimization latency")
+AGENT_ACTIVE_THREADS     = Gauge("agent_active_threads_total",          "Active conversation threads")
+AGENT_READY              = Gauge("agent_model_ready",                   "Agent service ready (1=yes)")
 from langchain_core.messages import AIMessage, BaseMessage, HumanMessage
 from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
 from psycopg import AsyncConnection
@@ -424,9 +439,11 @@ async def lifespan(app: FastAPI):
 
         await _ensure_threads_table()
 
+    AGENT_READY.set(1)
     try:
         yield
     finally:
+        AGENT_READY.set(0)
         if app.state.checkpointer_ctx is not None:
             await app.state.checkpointer_ctx.__aexit__(None, None, None)
 
@@ -440,6 +457,11 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+@app.get("/metrics")
+async def metrics():
+    return Response(generate_latest(), media_type=CONTENT_TYPE_LATEST)
 
 
 @app.get("/health")
@@ -604,6 +626,8 @@ async def delete_thread(thread_id: str):
 
 @app.post("/chat", response_model=ChatResponse)
 async def chat(req: ChatRequest):
+    AGENT_CHAT_REQUESTS.inc()
+    t0 = time.time()
     try:
         graph = app.state.graph
         convo_id = _thread_id_or_new(req.thread_id)
@@ -671,11 +695,16 @@ async def chat(req: ChatRequest):
     except HTTPException:
         raise
     except Exception as e:
+        AGENT_CHAT_ERRORS.inc()
         raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        AGENT_CHAT_LATENCY.observe(time.time() - t0)
 
 
 @app.post("/optimization/respond", response_model=OptimizationResponse)
 async def optimization_respond(req: OptimizationRequest):
+    AGENT_OPT_REQUESTS.inc()
+    t0 = time.time()
     try:
         _, resolved_base_url, resolved_api_key = _resolve_provider(None, None)
 
@@ -701,6 +730,11 @@ async def optimization_respond(req: OptimizationRequest):
         decision = result.get("decision_output") or {}
         tool_trace = result.get("tool_trace") or []
 
+        for entry in tool_trace:
+            tool_name = entry.get("tool", "unknown")
+            if tool_name:
+                AGENT_TOOL_CALLS.labels(tool_name=tool_name).inc()
+
         return OptimizationResponse(
             decision=decision,
             recommended_actions=decision.get("recommended_actions", []),
@@ -712,12 +746,14 @@ async def optimization_respond(req: OptimizationRequest):
         raise
     except Exception as e:
         err = str(e)
-        # Reset cached graph on any LLM error so next call rebuilds cleanly
+        AGENT_OPT_ERRORS.inc()
         app.state.optimization_graph = None
-        # Detect Groq / provider rate limit
         if "429" in err or "rate_limit" in err.lower() or "rate limit" in err.lower():
+            AGENT_OPT_RATE_LIMITS.inc()
             raise HTTPException(status_code=429, detail=f"LLM rate limit reached — retry after 60s. ({err})")
         raise HTTPException(status_code=500, detail=err)
+    finally:
+        AGENT_OPT_LATENCY.observe(time.time() - t0)
 
 
 @app.post("/v1/chat/completions")

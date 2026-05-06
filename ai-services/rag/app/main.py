@@ -1,15 +1,28 @@
 import os
 import asyncio
+import time as _time
 from typing import Optional, List, Dict, Any
-from fastapi import FastAPI, HTTPException, UploadFile, File
+from fastapi import FastAPI, HTTPException, UploadFile, File, Response
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from embeddings import get_embedder, download_progress
 from vector_store import VectorStoreClient
 from contextlib import asynccontextmanager
 from dotenv import load_dotenv
+from prometheus_client import Counter, Gauge, Histogram, generate_latest, CONTENT_TYPE_LATEST
 
 load_dotenv()
+
+# ── RAG Prometheus metrics ────────────────────────────────────────────────────
+RAG_INGEST_REQUESTS  = Counter("rag_ingest_requests_total",   "Total ingest requests")
+RAG_INGEST_ERRORS    = Counter("rag_ingest_errors_total",     "Total ingest errors")
+RAG_INGEST_CHUNKS    = Counter("rag_ingest_chunks_total",     "Total chunks ingested")
+RAG_RETRIEVE_REQUESTS= Counter("rag_retrieve_requests_total", "Total retrieve requests")
+RAG_RETRIEVE_ERRORS  = Counter("rag_retrieve_errors_total",   "Total retrieve errors")
+RAG_RETRIEVE_LATENCY = Histogram("rag_retrieve_latency_seconds", "Retrieve latency")
+RAG_INGEST_LATENCY   = Histogram("rag_ingest_latency_seconds",   "Ingest latency")
+RAG_TOTAL_CHUNKS     = Gauge("rag_total_chunks",              "Total chunks in vector store")
+RAG_MODEL_READY      = Gauge("rag_model_ready",               "RAG service ready (1=yes)")
 
 models = {}
 warmup_state = {
@@ -94,6 +107,12 @@ async def _init_models():
 
         init_state["status"] = "ready"
         init_state["last_error"] = None
+        RAG_MODEL_READY.set(1)
+
+        try:
+            RAG_TOTAL_CHUNKS.set(models["vs"].total_chunks())
+        except Exception:
+            pass
 
         warmup_state["status"] = "idle"
         warmup_state["last_error"] = None
@@ -112,6 +131,7 @@ async def lifespan(app: FastAPI):
     asyncio.create_task(_init_models())
     print("System starting (background init).")
     yield
+    RAG_MODEL_READY.set(0)
     models.clear()
     warmup_state["status"] = "idle"
     warmup_state["last_error"] = None
@@ -164,6 +184,17 @@ def _require_ready():
         raise HTTPException(status_code=503, detail="Models still loading")
 
 
+@app.get("/metrics")
+async def metrics():
+    if "vs" in models:
+        try:
+            RAG_TOTAL_CHUNKS.set(models["vs"].total_chunks())
+        except Exception:
+            pass
+    RAG_MODEL_READY.set(1 if init_state["status"] == "ready" else 0)
+    return Response(generate_latest(), media_type=CONTENT_TYPE_LATEST)
+
+
 @app.get("/health")
 async def health():
     progress = 100.0 if init_state["status"] == "ready" else download_progress["percentage"]
@@ -204,16 +235,25 @@ async def warmup():
 @app.post("/ingest/text")
 async def ingest_text(req: IngestTextRequest):
     _require_ready()
+    RAG_INGEST_REQUESTS.inc()
+    t0 = _time.time()
     try:
         ids = models["vs"].ingest_text(req.text, req.metadata, models["embedder"])
+        RAG_INGEST_CHUNKS.inc(len(ids))
+        RAG_TOTAL_CHUNKS.set(models["vs"].total_chunks())
         return {"ingested_chunks": len(ids), "ids": ids}
     except Exception as e:
+        RAG_INGEST_ERRORS.inc()
         raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        RAG_INGEST_LATENCY.observe(_time.time() - t0)
 
 
 @app.post("/ingest/file")
 async def ingest_file(file: UploadFile = File(...)):
     _require_ready()
+    RAG_INGEST_REQUESTS.inc()
+    t0 = _time.time()
     try:
         content = await file.read()
         filename = file.filename or "unknown"
@@ -223,9 +263,14 @@ async def ingest_file(file: UploadFile = File(...)):
             else content.decode("utf-8")
         )
         ids = models["vs"].ingest_text(text, {"source": filename}, models["embedder"])
+        RAG_INGEST_CHUNKS.inc(len(ids))
+        RAG_TOTAL_CHUNKS.set(models["vs"].total_chunks())
         return {"filename": filename, "ingested_chunks": len(ids), "ids": ids}
     except Exception as e:
+        RAG_INGEST_ERRORS.inc()
         raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        RAG_INGEST_LATENCY.observe(_time.time() - t0)
 
 
 @app.post("/ingest/batch")
@@ -280,6 +325,8 @@ async def ingest_batch(req: BatchIngestRequest):
 @app.post("/retrieve")
 async def retrieve(req: RetrieveRequest):
     _require_ready()
+    RAG_RETRIEVE_REQUESTS.inc()
+    t0 = _time.time()
     try:
         if req.search_type == "hybrid":
             chunks = models["vs"].hybrid_search(
@@ -313,8 +360,13 @@ async def retrieve(req: RetrieveRequest):
                 detail=f"Invalid search_type: {req.search_type}",
             )
         return {"chunks": chunks, "query": req.query, "search_type": req.search_type}
+    except HTTPException:
+        raise
     except Exception as e:
+        RAG_RETRIEVE_ERRORS.inc()
         raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        RAG_RETRIEVE_LATENCY.observe(_time.time() - t0)
 
 
 @app.get("/documents")

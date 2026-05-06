@@ -183,7 +183,7 @@ async def retrieve_node(state: AgentState, config: RunnableConfig) -> AgentState
     if enable_rewriting:
         try:
             llm = get_llm(
-                model_name=cfg.get("model", "qwen/qwen3-32b"),
+                model_name=cfg.get("model", "meta-llama/llama-4-scout-17b-16e-instruct"),
                 base_url=cfg.get("base_url"),
                 api_key=cfg.get("api_key"),
             )

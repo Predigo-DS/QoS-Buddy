@@ -237,6 +237,24 @@ def _reconstruction_scores(model: nn.Module, windows: np.ndarray, batch_size: in
     return np.asarray(scores, dtype=np.float64)
 
 
+from prometheus_client import Counter, Histogram, Gauge, generate_latest, CONTENT_TYPE_LATEST
+from fastapi.responses import Response
+import time as _time
+
+# ---------------------------------------------------------------------------
+# Prometheus metrics
+# ---------------------------------------------------------------------------
+PREDICT_REQUESTS   = Counter("anomaly_predict_requests_total", "Total prediction requests")
+PREDICT_ERRORS     = Counter("anomaly_predict_errors_total", "Total prediction errors")
+ANOMALY_DETECTED   = Counter("anomaly_detected_total", "Total anomaly windows detected")
+ANOMALY_WINDOWS    = Gauge("anomaly_anomaly_windows_last", "Anomaly windows in last prediction")
+TOTAL_WINDOWS      = Gauge("anomaly_total_windows_last", "Total windows in last prediction")
+ANOMALY_RATE       = Gauge("anomaly_rate_last", "Anomaly rate (anomaly_windows/total_windows) in last call")
+RECON_SCORE        = Gauge("anomaly_reconstruction_score_max_last", "Max reconstruction score in last prediction")
+PREDICT_LATENCY    = Histogram("anomaly_predict_latency_seconds", "Prediction latency in seconds",
+                               buckets=[0.01, 0.05, 0.1, 0.25, 0.5, 1.0, 2.0, 5.0])
+MODEL_READY        = Gauge("anomaly_model_ready", "1 if model loaded and ready, 0 otherwise")
+
 app = FastAPI(title="QoS-Buddy Anomaly Inference Service", version="1.0.0")
 app.add_middleware(
     CORSMiddleware,
@@ -252,8 +270,15 @@ def startup_event() -> None:
     try:
         _load_inference_state()
         _state["startup_error"] = None
+        MODEL_READY.set(1)
     except Exception as e:
         _state["startup_error"] = str(e)
+        MODEL_READY.set(0)
+
+
+@app.get("/metrics")
+def metrics():
+    return Response(generate_latest(), media_type=CONTENT_TYPE_LATEST)
 
 
 @app.get("/health")
@@ -283,48 +308,68 @@ def metadata() -> dict[str, Any]:
 
 @app.post("/predict", response_model=PredictResponse)
 def predict(req: PredictRequest) -> PredictResponse:
-    _require_ready()
-    artifacts = _state["artifacts"]
-    model: nn.Module = _state["model"]
+    PREDICT_REQUESTS.inc()
+    t0 = _time.time()
+    try:
+        _require_ready()
+        artifacts = _state["artifacts"]
+        model: nn.Module = _state["model"]
 
-    features: list[str] = artifacts["features"]
-    missing = [f for f in features if any(f not in row for row in req.rows)]
-    if missing:
-        raise HTTPException(status_code=400, detail=f"Missing feature(s): {missing}")
+        features: list[str] = artifacts["features"]
+        missing = [f for f in features if any(f not in row for row in req.rows)]
+        if missing:
+            PREDICT_ERRORS.inc()
+            raise HTTPException(status_code=400, detail=f"Missing feature(s): {missing}")
 
-    window_size = int(artifacts["window_size"])
-    stride = int(req.stride or window_size)
-    threshold_name = req.threshold_name
-    threshold = float(artifacts["thresholds"][threshold_name])
+        window_size = int(artifacts["window_size"])
+        stride = int(req.stride or window_size)
+        threshold_name = req.threshold_name
+        threshold = float(artifacts["thresholds"][threshold_name])
 
-    df = pd.DataFrame(req.rows)
-    X_raw = df[features].astype(np.float32).values
-    X_clip = _apply_clips(X_raw, features, artifacts["clip_bounds"])
-    X_scaled = artifacts["scaler"].transform(X_clip).astype(np.float32)
+        df = pd.DataFrame(req.rows)
+        X_raw = df[features].astype(np.float32).values
+        X_clip = _apply_clips(X_raw, features, artifacts["clip_bounds"])
+        X_scaled = artifacts["scaler"].transform(X_clip).astype(np.float32)
 
-    windows, row_ranges = _build_windows(X_scaled, window_size, stride)
-    scores = _reconstruction_scores(model, windows)
-    preds = scores >= threshold
+        windows, row_ranges = _build_windows(X_scaled, window_size, stride)
+        scores = _reconstruction_scores(model, windows)
+        preds = scores >= threshold
 
-    output_windows = [
-        WindowPrediction(
-            window_index=i,
-            start_row=s,
-            end_row=e,
-            reconstruction_score=float(scores[i]),
-            threshold_used=threshold,
-            is_anomaly=bool(preds[i]),
+        n_anomalies = int(np.sum(preds))
+        n_total = len(row_ranges)
+
+        ANOMALY_DETECTED.inc(n_anomalies)
+        ANOMALY_WINDOWS.set(n_anomalies)
+        TOTAL_WINDOWS.set(n_total)
+        ANOMALY_RATE.set(n_anomalies / n_total if n_total > 0 else 0.0)
+        RECON_SCORE.set(float(np.max(scores)) if len(scores) > 0 else 0.0)
+
+        output_windows = [
+            WindowPrediction(
+                window_index=i,
+                start_row=s,
+                end_row=e,
+                reconstruction_score=float(scores[i]),
+                threshold_used=threshold,
+                is_anomaly=bool(preds[i]),
+            )
+            for i, (s, e) in enumerate(row_ranges)
+        ]
+
+        return PredictResponse(
+            model_type=artifacts["model_type"],
+            window_size=window_size,
+            stride=stride,
+            threshold_name=threshold_name,
+            threshold_value=threshold,
+            total_windows=n_total,
+            anomaly_windows=n_anomalies,
+            windows=output_windows,
         )
-        for i, (s, e) in enumerate(row_ranges)
-    ]
-
-    return PredictResponse(
-        model_type=artifacts["model_type"],
-        window_size=window_size,
-        stride=stride,
-        threshold_name=threshold_name,
-        threshold_value=threshold,
-        total_windows=len(output_windows),
-        anomaly_windows=int(np.sum(preds)),
-        windows=output_windows,
-    )
+    except HTTPException:
+        raise
+    except Exception:
+        PREDICT_ERRORS.inc()
+        raise
+    finally:
+        PREDICT_LATENCY.observe(_time.time() - t0)

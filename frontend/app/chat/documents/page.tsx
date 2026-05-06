@@ -772,12 +772,12 @@ export default function DocumentsPage(): React.ReactNode {
                                        </span>
                                      )}
                                      {detail.chunks_created !== undefined && (
-                                       <span className="text-muted">{detail.chunks_created} chunks{detail.chunks_filtered > 0 ? `, ${detail.chunks_filtered} filtered` : ''}</span>
+                                       <span className="text-muted">{detail.chunks_created} chunks{(detail.chunks_filtered ?? 0) > 0 ? `, ${detail.chunks_filtered} filtered` : ''}</span>
                                      )}
                                    </div>
                                  </div>
-                                 {detail.chunk_previews?.length > 0 && (
-                                   <p className="mt-1 text-muted line-clamp-2">{detail.chunk_previews[0]}</p>
+                                 {(detail.chunk_previews?.length ?? 0) > 0 && (
+                                   <p className="mt-1 text-muted line-clamp-2">{detail.chunk_previews?.[0]}</p>
                                  )}
                                  {detail.error && (
                                    <p className="mt-1 text-red-400">{detail.error}</p>
@@ -788,7 +788,7 @@ export default function DocumentsPage(): React.ReactNode {
                            <div className="mt-2">
                              <button
                                onClick={() => {
-                                 const blob = new Blob([JSON.stringify(jsonProgress.results.document_details, null, 2)], { type: 'application/json' });
+                                 const blob = new Blob([JSON.stringify(jsonProgress.results?.document_details, null, 2)], { type: 'application/json' });
                                  const url = URL.createObjectURL(blob);
                                  const a = document.createElement('a');
                                  a.href = url;
